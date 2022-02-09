@@ -4,30 +4,34 @@ use std::fmt;
 use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
-use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet, Vector};
 use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    assert_one_yocto, env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
-    PromiseResult, StorageUsage, BorshStorageKey
+    assert_one_yocto, env, log, near_bindgen, AccountId, Balance, BorshStorageKey, Gas,
+    PanicOnDefault, Promise, PromiseResult, StorageUsage,
 };
 
-use crate::account_deposit::{VAccount, Account};
+use crate::account_deposit::{Account, VAccount};
 pub use crate::action::SwapAction;
 use crate::action::{Action, ActionResult};
-use crate::errors::*;
 use crate::admin_fee::AdminFees;
+use crate::aml::{ext_aml, ext_self, AmlOperation};
+use crate::errors::*;
 use crate::pool::Pool;
 use crate::simple_pool::SimplePool;
 use crate::stable_swap::StableSwapPool;
 use crate::utils::check_token_duplicates;
-pub use crate::views::{PoolInfo, ContractMetadata};
+pub use crate::views::{ContractMetadata, PoolInfo};
+
+const XCC_GAS: Gas = 20_000_000_000_000;
 
 mod account_deposit;
 mod action;
-mod errors;
 mod admin_fee;
+mod aml;
+mod errors;
 mod legacy;
 mod multi_fungible_token;
 mod owner;
@@ -48,14 +52,15 @@ pub(crate) enum StorageKey {
     Shares { pool_id: u32 },
     Whitelist,
     Guardian,
-    AccountTokens {account_id: AccountId},
+    AccountTokens { account_id: AccountId },
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Eq, PartialEq, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub enum RunningState {
-    Running, Paused
+    Running,
+    Paused,
 }
 
 impl fmt::Display for RunningState {
@@ -86,12 +91,22 @@ pub struct Contract {
     guardians: UnorderedSet<AccountId>,
     /// Running state
     state: RunningState,
+    /// Account of an AML contract.
+    aml_account_id: AccountId,
+    /// Accepted risk score (account's risk score should be greater or equal to this).
+    accepted_risk_score: u8,
 }
 
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(owner_id: ValidAccountId, exchange_fee: u32, referral_fee: u32) -> Self {
+    pub fn new(
+        owner_id: ValidAccountId,
+        exchange_fee: u32,
+        referral_fee: u32,
+        aml_account_id: ValidAccountId,
+        accepted_risk_score: u8,
+    ) -> Self {
         Self {
             owner_id: owner_id.as_ref().clone(),
             exchange_fee,
@@ -101,6 +116,8 @@ impl Contract {
             whitelisted_tokens: UnorderedSet::new(StorageKey::Whitelist),
             guardians: UnorderedSet::new(StorageKey::Guardian),
             state: RunningState::Running,
+            aml_account_id: aml_account_id.as_ref().clone(),
+            accepted_risk_score,
         }
     }
 
@@ -163,7 +180,7 @@ impl Contract {
             for action in &actions {
                 for token in action.tokens() {
                     assert!(
-                        account.get_balance(&token).is_some() 
+                        account.get_balance(&token).is_some()
                             || self.whitelisted_tokens.contains(&token),
                         "{}",
                         // [AUDIT_05]
@@ -179,27 +196,95 @@ impl Contract {
         result
     }
 
+    pub fn update_aml_account_id(&mut self, aml_account_id: ValidAccountId) {
+        self.assert_contract_running();
+        assert!(self.is_owner_or_guardians(), "{}", ERR100_NOT_ALLOWED);
+        self.aml_account_id = aml_account_id.as_ref().clone();
+    }
+
+    pub fn update_accepted_risk_score(&mut self, accepted_risk_score: u8) {
+        self.assert_contract_running();
+        assert!(self.is_owner_or_guardians(), "{}", ERR100_NOT_ALLOWED);
+        self.accepted_risk_score = accepted_risk_score;
+    }
+
+    #[private]
+    pub fn callback_is_aml_allowed(&self) -> bool {
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Failed => env::panic(b"ERR_AML_CALL_FAILED"),
+            PromiseResult::Successful(result) => {
+                let (_category, score) =
+                    near_sdk::serde_json::from_slice::<(String, u8)>(&result).unwrap();
+                score >= self.accepted_risk_score
+            }
+        }
+    }
+
+    #[private]
+    pub fn callback_aml_operation(
+        &mut self,
+        operation: AmlOperation,
+        #[callback] is_aml_allowed: bool,
+    ) {
+        assert!(is_aml_allowed, "ERR_AML_NOT_ALLOWED");
+        match operation {
+            AmlOperation::Swap {
+                actions,
+                referral_id,
+            } => {
+                self.internal_swap_unchecked(actions, referral_id);
+            }
+            AmlOperation::AddLiquidity {
+                pool_id,
+                amounts,
+                min_amounts,
+            } => {
+                self.internal_add_liquidity_unchecked(pool_id, amounts, min_amounts);
+            }
+            AmlOperation::AddStableLiquidity {
+                pool_id,
+                amounts,
+                min_shares,
+            } => {
+                self.internal_add_stable_liquidity_unchecked(pool_id, amounts, min_shares);
+            }
+        }
+    }
+
     /// Execute set of swap actions between pools.
     /// If referrer provided, pays referral_fee to it.
     /// If no attached deposit, outgoing tokens used in swaps must be whitelisted.
     #[payable]
-    pub fn swap(&mut self, actions: Vec<SwapAction>, referral_id: Option<ValidAccountId>) -> U128 {
+    pub fn swap(
+        &mut self,
+        actions: Vec<SwapAction>,
+        referral_id: Option<ValidAccountId>,
+    ) -> Promise {
         self.assert_contract_running();
         assert_ne!(actions.len(), 0, "ERR_AT_LEAST_ONE_SWAP");
-        U128(
-            self.execute_actions(
-                actions
-                    .into_iter()
-                    .map(|swap_action| Action::Swap(swap_action))
-                    .collect(),
-                referral_id,
-            )
-            .to_amount(),
+        ext_aml::get_address(
+            env::predecessor_account_id(),
+            &self.aml_account_id,
+            0,
+            XCC_GAS,
         )
+        .then(ext_self::callback_is_aml_allowed(
+            &env::current_account_id(),
+            0,
+            XCC_GAS,
+        ))
+        .then(ext_self::callback_aml_operation(
+            AmlOperation::Swap {
+                actions,
+                referral_id,
+            },
+            &env::current_account_id(),
+            env::attached_deposit(),
+            XCC_GAS,
+        ))
     }
 
-    /// Add liquidity from already deposited amounts to given pool.
-    #[payable]
     pub fn add_liquidity(
         &mut self,
         pool_id: u64,
@@ -207,75 +292,52 @@ impl Contract {
         min_amounts: Option<Vec<U128>>,
     ) {
         self.assert_contract_running();
-        assert!(
-            env::attached_deposit() > 0,
-            "Requires attached deposit of at least 1 yoctoNEAR"
-        );
-        let prev_storage = env::storage_usage();
-        let sender_id = env::predecessor_account_id();
-        let mut amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
-        let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        // Add amounts given to liquidity first. It will return the balanced amounts.
-        pool.add_liquidity(
-            &sender_id,
-            &mut amounts,
-        );
-        if let Some(min_amounts) = min_amounts {
-            // Check that all amounts are above request min amounts in case of front running that changes the exchange rate.
-            for (amount, min_amount) in amounts.iter().zip(min_amounts.iter()) {
-                assert!(amount >= &min_amount.0, "ERR_MIN_AMOUNT");
-            }
-        }
-        let mut deposits = self.internal_unwrap_or_default_account(&sender_id);
-        let tokens = pool.tokens();
-        // Subtract updated amounts from deposits. This will fail if there is not enough funds for any of the tokens.
-        for i in 0..tokens.len() {
-            deposits.withdraw(&tokens[i], amounts[i]);
-        }
-        self.internal_save_account(&sender_id, deposits);
-        self.pools.replace(pool_id, &pool);
-        self.internal_check_storage(prev_storage);
+        ext_aml::get_address(
+            env::predecessor_account_id(),
+            &self.aml_account_id,
+            0,
+            XCC_GAS,
+        )
+        .then(ext_self::callback_is_aml_allowed(
+            &env::current_account_id(),
+            0,
+            XCC_GAS,
+        ))
+        .then(ext_self::callback_aml_operation(
+            AmlOperation::AddLiquidity {
+                pool_id,
+                amounts,
+                min_amounts,
+            },
+            &env::current_account_id(),
+            env::attached_deposit(),
+            XCC_GAS,
+        ));
     }
 
-    /// For stable swap pool, user can add liquidity with token's combination as his will.
-    /// But there is a little fee according to the bias of token's combination with the one in the pool.
-    /// pool_id: stable pool id. If simple pool is given, panic with unimplement.
-    /// amounts: token's combination (in pool tokens sequence) user want to add into the pool, a 0 means absent of that token.
-    /// min_shares: Slippage, if shares mint is less than it (cause of fee for too much bias), panic with  ERR68_SLIPPAGE
-    #[payable]
-    pub fn add_stable_liquidity(
-        &mut self,
-        pool_id: u64,
-        amounts: Vec<U128>,
-        min_shares: U128,
-    ) -> U128 {
+    pub fn add_stable_liquidity(&mut self, pool_id: u64, amounts: Vec<U128>, min_shares: U128) {
         self.assert_contract_running();
-        assert!(
-            env::attached_deposit() > 0,
-            "Requires attached deposit of at least 1 yoctoNEAR"
-        );
-        let prev_storage = env::storage_usage();
-        let sender_id = env::predecessor_account_id();
-        let amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
-        let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        // Add amounts given to liquidity first. It will return the balanced amounts.
-        let mint_shares = pool.add_stable_liquidity(
-            &sender_id,
-            &amounts,
-            min_shares.into(),
-            AdminFees::new(self.exchange_fee),
-        );
-        let mut deposits = self.internal_unwrap_or_default_account(&sender_id);
-        let tokens = pool.tokens();
-        // Subtract amounts from deposits. This will fail if there is not enough funds for any of the tokens.
-        for i in 0..tokens.len() {
-            deposits.withdraw(&tokens[i], amounts[i]);
-        }
-        self.internal_save_account(&sender_id, deposits);
-        self.pools.replace(pool_id, &pool);
-        self.internal_check_storage(prev_storage);
-
-        mint_shares.into()
+        ext_aml::get_address(
+            env::predecessor_account_id(),
+            &self.aml_account_id,
+            0,
+            XCC_GAS,
+        )
+        .then(ext_self::callback_is_aml_allowed(
+            &env::current_account_id(),
+            0,
+            XCC_GAS,
+        ))
+        .then(ext_self::callback_aml_operation(
+            AmlOperation::AddStableLiquidity {
+                pool_id,
+                amounts,
+                min_shares,
+            },
+            &env::current_account_id(),
+            env::attached_deposit(),
+            XCC_GAS,
+        ));
     }
 
     /// Remove liquidity from the pool into general pool of liquidity.
@@ -314,9 +376,10 @@ impl Contract {
     /// max_burn_shares: This is slippage protection, if user request would burn shares more than it, panic with ERR68_SLIPPAGE
     #[payable]
     pub fn remove_liquidity_by_tokens(
-        &mut self, pool_id: u64, 
-        amounts: Vec<U128>, 
-        max_burn_shares: U128
+        &mut self,
+        pool_id: u64,
+        amounts: Vec<U128>,
+        max_burn_shares: U128,
     ) -> U128 {
         assert_one_yocto();
         self.assert_contract_running();
@@ -352,7 +415,6 @@ impl Contract {
 
 /// Internal methods implementation.
 impl Contract {
-
     fn assert_contract_running(&self) {
         match self.state {
             RunningState::Running => (),
@@ -367,14 +429,14 @@ impl Contract {
             .unwrap_or_default() as Balance
             * env::storage_byte_cost();
 
-        let refund = env::attached_deposit()
-            .checked_sub(storage_cost)
-            .expect(
-                format!(
-                    "ERR_STORAGE_DEPOSIT need {}, attatched {}", 
-                    storage_cost, env::attached_deposit()
-                ).as_str()
-            );
+        let refund = env::attached_deposit().checked_sub(storage_cost).expect(
+            format!(
+                "ERR_STORAGE_DEPOSIT need {}, attatched {}",
+                storage_cost,
+                env::attached_deposit()
+            )
+            .as_str(),
+        );
         if refund > 0 {
             Promise::new(env::predecessor_account_id()).transfer(refund);
         }
@@ -391,6 +453,79 @@ impl Contract {
         self.pools.push(&pool);
         self.internal_check_storage(prev_storage);
         id
+    }
+
+    /// Add liquidity from already deposited amounts to given pool.
+    fn internal_add_liquidity_unchecked(
+        &mut self,
+        pool_id: u64,
+        amounts: Vec<U128>,
+        min_amounts: Option<Vec<U128>>,
+    ) {
+        assert!(
+            env::attached_deposit() > 0,
+            "Requires attached deposit of at least 1 yoctoNEAR"
+        );
+        let prev_storage = env::storage_usage();
+        let sender_id = env::predecessor_account_id();
+        let mut amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
+        let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
+        // Add amounts given to liquidity first. It will return the balanced amounts.
+        pool.add_liquidity(&sender_id, &mut amounts);
+        if let Some(min_amounts) = min_amounts {
+            // Check that all amounts are above request min amounts in case of front running that changes the exchange rate.
+            for (amount, min_amount) in amounts.iter().zip(min_amounts.iter()) {
+                assert!(amount >= &min_amount.0, "ERR_MIN_AMOUNT");
+            }
+        }
+        let mut deposits = self.internal_unwrap_or_default_account(&sender_id);
+        let tokens = pool.tokens();
+        // Subtract updated amounts from deposits. This will fail if there is not enough funds for any of the tokens.
+        for i in 0..tokens.len() {
+            deposits.withdraw(&tokens[i], amounts[i]);
+        }
+        self.internal_save_account(&sender_id, deposits);
+        self.pools.replace(pool_id, &pool);
+        self.internal_check_storage(prev_storage);
+    }
+
+    /// For stable swap pool, user can add liquidity with token's combination as his will.
+    /// But there is a little fee according to the bias of token's combination with the one in the pool.
+    /// pool_id: stable pool id. If simple pool is given, panic with unimplement.
+    /// amounts: token's combination (in pool tokens sequence) user want to add into the pool, a 0 means absent of that token.
+    /// min_shares: Slippage, if shares mint is less than it (cause of fee for too much bias), panic with  ERR68_SLIPPAGE
+    fn internal_add_stable_liquidity_unchecked(
+        &mut self,
+        pool_id: u64,
+        amounts: Vec<U128>,
+        min_shares: U128,
+    ) -> U128 {
+        assert!(
+            env::attached_deposit() > 0,
+            "Requires attached deposit of at least 1 yoctoNEAR"
+        );
+        let prev_storage = env::storage_usage();
+        let sender_id = env::predecessor_account_id();
+        let amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
+        let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
+        // Add amounts given to liquidity first. It will return the balanced amounts.
+        let mint_shares = pool.add_stable_liquidity(
+            &sender_id,
+            &amounts,
+            min_shares.into(),
+            AdminFees::new(self.exchange_fee),
+        );
+        let mut deposits = self.internal_unwrap_or_default_account(&sender_id);
+        let tokens = pool.tokens();
+        // Subtract amounts from deposits. This will fail if there is not enough funds for any of the tokens.
+        for i in 0..tokens.len() {
+            deposits.withdraw(&tokens[i], amounts[i]);
+        }
+        self.internal_save_account(&sender_id, deposits);
+        self.pools.replace(pool_id, &pool);
+        self.internal_check_storage(prev_storage);
+
+        mint_shares.into()
     }
 
     /// Execute sequence of actions on given account. Modifies passed account.
@@ -466,6 +601,17 @@ impl Contract {
         self.pools.replace(pool_id, &pool);
         amount_out
     }
+
+    fn internal_swap_unchecked(
+        &mut self,
+        actions: Vec<SwapAction>,
+        referral_id: Option<ValidAccountId>,
+    ) -> U128 {
+        U128(
+            self.execute_actions(actions.into_iter().map(Action::Swap).collect(), referral_id)
+                .to_amount(),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -483,7 +629,7 @@ mod tests {
     fn setup_contract() -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.predecessor_account_id(accounts(0)).build());
-        let contract = Contract::new(accounts(0), 1600, 400);
+        let contract = Contract::new(accounts(0), 1600, 400, todo!("test with AML contract"), 10);
         (context, contract)
     }
 
@@ -561,18 +707,17 @@ mod tests {
         amount_in: Balance,
         token_out: ValidAccountId,
     ) -> Balance {
-        contract
-            .swap(
-                vec![SwapAction {
-                    pool_id,
-                    token_in: token_in.into(),
-                    amount_in: Some(U128(amount_in)),
-                    token_out: token_out.into(),
-                    min_amount_out: U128(1),
-                }],
-                None,
-            )
-            .0
+        let promise = contract.swap(
+            vec![SwapAction {
+                pool_id,
+                token_in: token_in.into(),
+                amount_in: Some(U128(amount_in)),
+                token_out: token_out.into(),
+                min_amount_out: U128(1),
+            }],
+            None,
+        );
+        todo!("use promises in testing")
     }
 
     #[test]
