@@ -1,47 +1,45 @@
-# Ref Finance Contracts
+# Jumbo Contracts
 
-This mono repo contains the source code for the smart contracts of Ref Finance on [NEAR](https://near.org).
+## CLI installation
 
-## Contracts
+You can install cli via this [tutorial](https://docs.near.org/docs/tools/near-cli#installation).
 
-| Contract | Reference | Description |
-| - | - | - |
-| [test-token](test-token/src/lib.rs) | - | Test token contract |
-| [ref-exchange](ref-exchange/src/lib.rs) | [docs](https://ref-finance.gitbook.io/ref-finance/smart-contracts/ref-exchange) | Main exchange contract, that allows to deposit and withdraw tokens, exchange them via various pools |
 
-## Development
+## Getting started
 
-1. Install `rustup` via https://rustup.rs/
-2. Run the following:
-
+For creating the new account for deploying contract to testnet use next command
 ```
-rustup default stable
-rustup target add wasm32-unknown-unknown
+near create-account subAccount.yourAccount.testnet --masterAccount yourAccount.testnet --initialBalance 10
 ```
 
-### Testing
 
-Contracts have unit tests and also integration tests using NEAR Simulation framework. All together can be run:
+Create constants
+```
+export CONTRACT_ID=subAccount.yourAccount.testnet
+export OWNER_ID=yourAccount.testnet
+```
 
+
+First of all - you will need to compile the wasm file of contracts
 ```
 cd ref-exchange
-cargo test --all
+./build_local.sh
 ```
 
-### Compiling
 
-You can build release version by running next scripts inside each contract folder:
+And then deploy it like that
+```
+near deploy $CONTRACT_ID --wasmFile=res/ref_exchange_local.wasm
+```
 
+
+Then initialize contract with command
+```
+near call $CONTRACT_ID new '{"owner_id": "'$OWNER_ID'", "exchange_fee":"5", "referral_fee": 10}' --accountId $CONTRACT_ID
+```
+
+## Testing 
 ```
 cd ref-exchange
-./build.sh
+cargo test
 ```
-
-### Deploying to TestNet
-
-To deploy to TestNet, you can use next command:
-```
-near dev-deploy
-```
-
-This will output on the contract ID it deployed.

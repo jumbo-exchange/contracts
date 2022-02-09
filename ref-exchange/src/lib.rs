@@ -91,7 +91,7 @@ pub struct Contract {
     guardians: UnorderedSet<AccountId>,
     /// Running state
     state: RunningState,
-    /// Account of an AML contract (e.g. HAPI).
+    /// Account of an AML contract
     aml_account_id: AccountId,
     /// Accepted risk score (account's risk score should be greater or equal to this).
     accepted_risk_score: u8,
