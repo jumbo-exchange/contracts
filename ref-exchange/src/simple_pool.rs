@@ -1,11 +1,11 @@
 use std::cmp::min;
 
+use crate::admin_fee::AdminFees;
+use crate::StorageKey;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::ValidAccountId;
 use near_sdk::{env, AccountId, Balance};
-use crate::StorageKey;
-use crate::admin_fee::AdminFees;
 
 use crate::errors::{
     ERR13_LP_NOT_REGISTERED, ERR14_LP_ALREADY_REGISTERED, ERR31_ZERO_AMOUNT, ERR32_ZERO_SHARES,
@@ -21,6 +21,8 @@ const NUM_TOKENS: usize = 2;
 /// Liquidity providers when depositing receive shares, that can be later burnt to withdraw pool's tokens in proportion.
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct SimplePool {
+    /// ID of this pool.
+    pub id: u32,
     /// List of tokens in the pool.
     pub token_account_ids: Vec<AccountId>,
     /// How much NEAR this contract has.
@@ -47,13 +49,15 @@ impl SimplePool {
         exchange_fee: u32,
         referral_fee: u32,
     ) -> Self {
-        assert!(
-            total_fee < FEE_DIVISOR,
-            "ERR_FEE_TOO_LARGE"
-        );
+        assert!(total_fee < FEE_DIVISOR, "ERR_FEE_TOO_LARGE");
         // [AUDIT_10]
-        assert_eq!(token_account_ids.len(), NUM_TOKENS, "ERR_SHOULD_HAVE_2_TOKENS");
+        assert_eq!(
+            token_account_ids.len(),
+            NUM_TOKENS,
+            "ERR_SHOULD_HAVE_2_TOKENS"
+        );
         Self {
+            id,
             token_account_ids: token_account_ids.iter().map(|a| a.clone().into()).collect(),
             amounts: vec![0u128; token_account_ids.len()],
             volumes: vec![SwapVolume::default(); token_account_ids.len()],
@@ -61,9 +65,7 @@ impl SimplePool {
             exchange_fee,
             referral_fee,
             // [AUDIT_11]
-            shares: LookupMap::new(StorageKey::Shares {
-                pool_id: id,
-            }),
+            shares: LookupMap::new(StorageKey::Shares { pool_id: id }),
             shares_total_supply: 0,
         }
     }
@@ -428,6 +430,7 @@ mod tests {
     fn test_rounding() {
         testing_env!(VMContextBuilder::new().build());
         let mut pool = SimplePool {
+            id: 0,
             token_account_ids: vec![accounts(0).to_string(), accounts(1).to_string()],
             amounts: vec![367701466208080431008668441, 2267116519548219219535],
             volumes: vec![SwapVolume::default(), SwapVolume::default()],
@@ -435,9 +438,7 @@ mod tests {
             exchange_fee: 5,
             referral_fee: 1,
             shares_total_supply: 35967818779820559673547466,
-            shares: LookupMap::new(StorageKey::Shares {
-                pool_id: 0,
-            }),
+            shares: LookupMap::new(StorageKey::Shares { pool_id: 0 }),
         };
         let mut amounts = vec![145782, 1];
         let _ = pool.add_liquidity(&accounts(2).to_string(), &mut amounts);
