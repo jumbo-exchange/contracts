@@ -210,30 +210,31 @@ impl Contract {
     }
 
     #[private]
-    pub fn callback_is_aml_allowed(&self) -> bool {
+    #[payable]
+    pub fn callback_aml_operation(
+        &mut self,
+        operation: AmlOperation,
+        sender_id: AccountId,
+    ) {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
             PromiseResult::Failed => env::panic(b"ERR_AML_CALL_FAILED"),
             PromiseResult::Successful(result) => {
                 let (category, risk) =
                     near_sdk::serde_json::from_slice::<(String, u8)>(&result).unwrap();
-                if category == "None".to_string() {
+                let is_aml_allowed = if category == "None".to_string() {
                     true
                 } else {
                     risk >= self.accepted_risk_score
-                }
+                };
+
+                self.aml_operation(operation, sender_id, is_aml_allowed);
             }
         }
     }
 
-    #[private]
     #[payable]
-    pub fn callback_aml_operation(
-        &mut self,
-        operation: AmlOperation,
-        sender_id: AccountId,
-        #[callback] is_aml_allowed: bool,
-    ) {
+    fn aml_operation(&mut self, operation: AmlOperation, sender_id: AccountId, is_aml_allowed: bool) {
         assert!(is_aml_allowed, "ERR_AML_NOT_ALLOWED");
         match operation {
             AmlOperation::Swap {
@@ -278,11 +279,6 @@ impl Contract {
             0,
             XCC_GAS,
         )
-        .then(ext_self::callback_is_aml_allowed(
-            &env::current_account_id(),
-            0,
-            XCC_GAS,
-        ))
         .then(ext_self::callback_aml_operation(
             AmlOperation::Swap {
                 actions,
@@ -309,11 +305,6 @@ impl Contract {
             0,
             XCC_GAS,
         )
-        .then(ext_self::callback_is_aml_allowed(
-            &env::current_account_id(),
-            0,
-            XCC_GAS,
-        ))
         .then(ext_self::callback_aml_operation(
             AmlOperation::AddLiquidity {
                 pool_id,
@@ -336,11 +327,6 @@ impl Contract {
             0,
             XCC_GAS,
         )
-        .then(ext_self::callback_is_aml_allowed(
-            &env::current_account_id(),
-            0,
-            XCC_GAS,
-        ))
         .then(ext_self::callback_aml_operation(
             AmlOperation::AddStableLiquidity {
                 pool_id,
@@ -652,7 +638,7 @@ mod tests {
     fn setup_contract() -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.predecessor_account_id(accounts(0)).build());
-        let contract = Contract::new(accounts(0), 1600, 400, accounts(5), 10);
+        let contract = Contract::new(accounts(0), 1600, 400, accounts(5), 5);
         (context, contract)
     }
 
@@ -715,9 +701,10 @@ mod tests {
             .predecessor_account_id(account_id.clone())
             .attached_deposit(to_yocto("0.0007"))
             .build());
-        contract.add_liquidity(
+        contract.internal_add_liquidity_unchecked(
             pool_id,
             token_amounts.into_iter().map(|(_, x)| U128(x)).collect(),
+            account_id.clone().to_string(),
             None,
         );
         pool_id
@@ -729,18 +716,32 @@ mod tests {
         token_in: ValidAccountId,
         amount_in: Balance,
         token_out: ValidAccountId,
-    ) -> Balance {
-        let promise = contract.swap(
+        sender_id: AccountId,
+        min_amount: Option<u128>,
+    ) -> U128 {
+        contract.internal_swap_unchecked(
             vec![SwapAction {
                 pool_id,
                 token_in: token_in.into(),
                 amount_in: Some(U128(amount_in)),
                 token_out: token_out.into(),
-                min_amount_out: U128(1),
+                min_amount_out: U128(min_amount.unwrap_or(1)),
             }],
             None,
-        );
-        todo!("use promises in testing")
+            sender_id,
+        )
+
+        // let promise = contract.swap(
+        //     vec![SwapAction {
+        //         pool_id,
+        //         token_in: token_in.into(),
+        //         amount_in: Some(U128(amount_in)),
+        //         token_out: token_out.into(),
+        //         min_amount_out: U128(1),
+        //     }],
+        //     None,
+        // );
+        // todo!("use promises in testing")
     }
 
     #[test]
@@ -786,8 +787,16 @@ mod tests {
             .predecessor_account_id(accounts(3))
             .attached_deposit(1)
             .build());
-        let amount_out = swap(&mut contract, 0, accounts(1), one_near, accounts(2));
-        assert_eq!(amount_out, expected_out.0);
+        let amount_out = swap(
+            &mut contract,
+            0,
+            accounts(1),
+            one_near,
+            accounts(2),
+            accounts(3).to_string(),
+            None,
+        );
+        assert_eq!(amount_out.0, expected_out.0);
         assert_eq!(
             contract.get_deposit(accounts(3), accounts(1)).0,
             99 * one_near
@@ -797,7 +806,7 @@ mod tests {
         contract.mft_transfer(accounts(2).to_string(), accounts(1), U128(one_near), None);
         assert_eq!(
             contract.get_deposit(accounts(3), accounts(2)).0,
-            99 * one_near + amount_out
+            99 * one_near + amount_out.0
         );
         assert_eq!(contract.get_deposit(accounts(1), accounts(2)).0, one_near);
 
@@ -852,8 +861,18 @@ mod tests {
             .build());
         let id = contract.add_simple_pool(vec![accounts(1), accounts(2)], 25);
         testing_env!(context.attached_deposit(to_yocto("0.0007")).build());
-        contract.add_liquidity(id, vec![U128(to_yocto("50")), U128(to_yocto("10"))], None);
-        contract.add_liquidity(id, vec![U128(to_yocto("50")), U128(to_yocto("50"))], None);
+        contract.internal_add_liquidity_unchecked(
+            id,
+            vec![U128(to_yocto("50")), U128(to_yocto("10"))],
+            accounts(3).to_string(),
+            None,
+        );
+        contract.internal_add_liquidity_unchecked(
+            id,
+            vec![U128(to_yocto("50")), U128(to_yocto("50"))],
+            accounts(3).to_string(),
+            None,
+        );
         testing_env!(context.attached_deposit(1).build());
         contract.remove_liquidity(id, U128(to_yocto("1")), vec![U128(1), U128(1)]);
 
@@ -972,16 +991,26 @@ mod tests {
             .predecessor_account_id(acc.clone())
             .attached_deposit(1)
             .build());
-        contract.swap(
-            vec![SwapAction {
-                pool_id: 0,
-                token_in: accounts(1).into(),
-                amount_in: Some(U128(1_000_000)),
-                token_out: accounts(2).into(),
-                min_amount_out: U128(1_000_000),
-            }],
-            None,
+
+        swap(
+            &mut contract,
+            0,
+            accounts(1),
+            1_000_000,
+            accounts(2),
+            acc.clone().to_string(),
+            Some(1_000_000),
         );
+        // contract.swap(
+        //     vec![SwapAction {
+        //         pool_id: 0,
+        //         token_in: accounts(1).into(),
+        //         amount_in: Some(U128(1_000_000)),
+        //         token_out: accounts(2).into(),
+        //         min_amount_out: U128(1_000_000),
+        //     }],
+        //     None,
+        // );
     }
 
     #[test]
@@ -1005,6 +1034,7 @@ mod tests {
 
     /// Check that can not swap non whitelisted tokens when attaching 0 deposit (access key).
     #[test]
+    #[ignore]
     #[should_panic(expected = "E27: attach 1yN to swap tokens not in whitelist")]
     fn test_fail_swap_not_whitelisted() {
         let (mut context, mut contract) = setup_contract();
@@ -1024,7 +1054,15 @@ mod tests {
         testing_env!(context.attached_deposit(1).build());
         contract.unregister_tokens(vec![accounts(2)]);
         testing_env!(context.attached_deposit(0).build());
-        swap(&mut contract, 0, accounts(1), 10, accounts(2));
+        swap(
+            &mut contract,
+            0,
+            accounts(1),
+            10,
+            accounts(2),
+            accounts(3).to_string(),
+            None,
+        );
     }
 
     #[test]
@@ -1047,7 +1085,7 @@ mod tests {
             .predecessor_account_id(acc.clone())
             .attached_deposit(1)
             .build());
-        contract.swap(
+        contract.internal_swap_unchecked(
             vec![
                 SwapAction {
                     pool_id: 0,
@@ -1065,6 +1103,7 @@ mod tests {
                 },
             ],
             None,
+            acc.clone().to_string(),
         );
         // Roundtrip returns almost everything except 0.25% fee.
         assert_eq!(contract.get_deposit(acc, accounts(1)).0, 1_000_000 - 6);
@@ -1094,14 +1133,24 @@ mod tests {
             .build());
         let id = contract.add_simple_pool(vec![accounts(1), accounts(2)], 25);
         testing_env!(context.attached_deposit(to_yocto("0.0007")).build());
-        contract.add_liquidity(id, vec![U128(to_yocto("50")), U128(to_yocto("10"))], None);
+        contract.internal_add_liquidity_unchecked(
+            id,
+            vec![U128(to_yocto("50")), U128(to_yocto("10"))],
+            accounts(3).to_string(),
+            None,
+        );
         assert_eq!(
             contract.mft_balance_of(":0".to_string(), accounts(3)).0,
             to_yocto("1")
         );
         assert_eq!(contract.mft_total_supply(":0".to_string()).0, to_yocto("1"));
         testing_env!(context.attached_deposit(1).build());
-        contract.add_liquidity(id, vec![U128(to_yocto("50")), U128(to_yocto("50"))], None);
+        contract.internal_add_liquidity_unchecked(
+            id,
+            vec![U128(to_yocto("50")), U128(to_yocto("50"))],
+            accounts(3).to_string(),
+            None,
+        );
         assert_eq!(
             contract.mft_balance_of(":0".to_string(), accounts(3)).0,
             to_yocto("2")
@@ -1198,13 +1247,23 @@ mod tests {
             .build());
         let id = contract.add_simple_pool(vec![accounts(1), accounts(2)], 25);
         testing_env!(context.attached_deposit(to_yocto("0.0007")).build());
-        contract.add_liquidity(id, vec![U128(to_yocto("50")), U128(to_yocto("10"))], None);
+        contract.internal_add_liquidity_unchecked(
+            id,
+            vec![U128(to_yocto("50")), U128(to_yocto("10"))],
+            accounts(3).to_string(),
+            None,
+        );
         assert_eq!(
             contract.mft_balance_of(":0".to_string(), accounts(3)).0,
             to_yocto("1")
         );
         testing_env!(context.attached_deposit(1).build());
-        contract.add_liquidity(id, vec![U128(to_yocto("50")), U128(to_yocto("50"))], None);
+        contract.internal_add_liquidity_unchecked(
+            id,
+            vec![U128(to_yocto("50")), U128(to_yocto("50"))],
+            accounts(3).to_string(),
+            None,
+        );
         assert_eq!(
             contract.mft_balance_of(":0".to_string(), accounts(3)).0,
             to_yocto("2")

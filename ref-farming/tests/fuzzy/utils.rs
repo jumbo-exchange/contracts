@@ -17,9 +17,9 @@ use crate::fuzzy::{
 
 
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
-    TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
-    EXCHANGE_WASM_BYTES => "../res/ref_exchange_release.wasm",
-    FARM_WASM_BYTES => "../res/ref_farming_release.wasm",
+    pub TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
+    pub EXCHANGE_WASM_BYTES => "../res/ref_exchange_release.wasm",
+    pub FARM_WASM_BYTES => "../res/ref_farming_release.wasm",
 }
 
 pub fn deploy_farming(root: &UserAccount, farming_id: AccountId, owner_id: AccountId) -> ContractAccount<Farming> {
@@ -39,7 +39,7 @@ pub fn deploy_pool(root: &UserAccount, contract_id: AccountId, owner_id: Account
         contract_id: contract_id,
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va(owner_id), 4, 1)
+        init_method: new(to_va(owner_id), 4, 1, to_va("".to_string()), 5)
     );
     pool
 }

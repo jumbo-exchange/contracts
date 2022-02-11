@@ -13,8 +13,8 @@ use ref_exchange::{ContractContract as Exchange, PoolInfo, SwapAction};
 use test_token::ContractContract as TestToken;
 
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
-    TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
-    EXCHANGE_WASM_BYTES => "../res/ref_exchange_release.wasm",
+    pub TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
+    pub EXCHANGE_WASM_BYTES => "../res/ref_exchange_release.wasm",
 }
 
 pub fn should_fail(r: ExecutionResult) {
@@ -105,7 +105,7 @@ fn setup_pool_with_liquidity() -> (
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), 4, 1)
+        init_method: new(to_va("owner".to_string()), 4, 1, to_va("".to_string()), 5)
     );
     let token1 = test_token(&root, dai(), vec![swap()]);
     let token2 = test_token(&root, eth(), vec![swap()]);
@@ -161,6 +161,7 @@ fn test_swap() {
     assert_eq!(
         view!(pool.get_pool(0)).unwrap_json::<PoolInfo>(),
         PoolInfo {
+            id: 0,
             pool_kind: "SIMPLE_POOL".to_string(),
             amp: 0,
             token_account_ids: vec![dai(), eth()],
@@ -241,7 +242,7 @@ fn test_withdraw_failure() {
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), 4, 1)
+        init_method: new(to_va("owner".to_string()), 4, 1, to_va("".to_string()), 5)
     );
     // Deploy DAI and wETH fungible tokens
     let dai_contract = test_token(&root, dai(), vec![swap()]);

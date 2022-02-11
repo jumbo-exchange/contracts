@@ -27,13 +27,10 @@ pub enum AmlOperation {
 
 #[ext_contract(ext_self)]
 pub trait ExtSelf {
-    fn callback_is_aml_allowed(&self) -> bool;
-
     fn callback_aml_operation(
         &mut self,
         operation: AmlOperation,
         sender_id: AccountId,
-        #[callback] is_aml_allowed: bool,
     ) -> U128;
 }
 
