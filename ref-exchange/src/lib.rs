@@ -174,7 +174,6 @@ impl Contract {
         sender_id: AccountId,
     ) -> ActionResult {
         self.assert_contract_running();
-        // let sender_id = env::predecessor_account_id();
         let mut account = self.internal_unwrap_account(&sender_id);
         // Validate that all tokens are whitelisted if no deposit (e.g. trade with access key).
         if env::attached_deposit() == 0 {
@@ -211,11 +210,7 @@ impl Contract {
 
     #[private]
     #[payable]
-    pub fn callback_aml_operation(
-        &mut self,
-        operation: AmlOperation,
-        sender_id: AccountId,
-    ) {
+    pub fn callback_aml_operation(&mut self, operation: AmlOperation, sender_id: AccountId) {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
             PromiseResult::Failed => env::panic(b"ERR_AML_CALL_FAILED"),
@@ -234,7 +229,12 @@ impl Contract {
     }
 
     #[payable]
-    fn aml_operation(&mut self, operation: AmlOperation, sender_id: AccountId, is_aml_allowed: bool) {
+    fn aml_operation(
+        &mut self,
+        operation: AmlOperation,
+        sender_id: AccountId,
+        is_aml_allowed: bool,
+    ) {
         assert!(is_aml_allowed, "ERR_AML_NOT_ALLOWED");
         match operation {
             AmlOperation::Swap {
@@ -426,7 +426,6 @@ impl Contract {
             "Requires attached deposit of at least 1 yoctoNEAR"
         );
         let prev_storage = env::storage_usage();
-        // let sender_id = env::predecessor_account_id();
         let mut amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
         let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
         // Add amounts given to liquidity first. It will return the balanced amounts.
@@ -466,7 +465,6 @@ impl Contract {
             "Requires attached deposit of at least 1 yoctoNEAR"
         );
         let prev_storage = env::storage_usage();
-        // let sender_id = env::predecessor_account_id();
         let amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
         let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
         // Add amounts given to liquidity first. It will return the balanced amounts.
