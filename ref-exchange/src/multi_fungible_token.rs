@@ -84,7 +84,7 @@ impl Contract {
             TokenOrPool::Token(token_id) => {
                 let mut sender_account: Account = self.internal_unwrap_account(&sender_id);
                 let mut receiver_account: Account = self.internal_unwrap_account(&receiver_id);
-                
+
                 sender_account.withdraw(&token_id, amount);
                 receiver_account.deposit(&token_id, amount);
                 self.internal_save_account(&sender_id, sender_account);
@@ -143,7 +143,7 @@ impl Contract {
                 let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
                 pool.share_register(account_id.as_ref());
                 self.pools.replace(pool_id, &pool);
-                self.internal_check_storage(prev_storage);
+                self.internal_check_storage(prev_storage, &env::predecessor_account_id());
             }
         }
     }
@@ -235,7 +235,7 @@ impl Contract {
             let receiver_balance = self.internal_mft_balance(token_id.clone(), &receiver_id);
             if receiver_balance > 0 {
                 let refund_amount = std::cmp::min(receiver_balance, unused_amount);
-                
+
                 let refund_to = if self.accounts.get(&sender_id).is_some() {
                     sender_id
                 } else {
@@ -264,7 +264,7 @@ impl Contract {
                     reference_hash: None,
                     decimals,
                 }
-            },
+            }
             TokenOrPool::Token(_token_id) => unimplemented!(),
         }
     }

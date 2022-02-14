@@ -17,7 +17,7 @@ use crate::account_deposit::{Account, VAccount};
 pub use crate::action::SwapAction;
 use crate::action::{Action, ActionResult};
 use crate::admin_fee::AdminFees;
-use crate::aml::{ext_aml, ext_self, AmlOperation};
+use crate::aml::{ext_aml, ext_self, AmlOperation, CategoryRisk};
 use crate::errors::*;
 use crate::pool::Pool;
 use crate::simple_pool::SimplePool;
@@ -25,7 +25,10 @@ use crate::stable_swap::StableSwapPool;
 use crate::utils::check_token_duplicates;
 pub use crate::views::{ContractMetadata, PoolInfo};
 
-const XCC_GAS: Gas = 20_000_000_000_000;
+const AML_CHECK_GAS: Gas = 20_000_000_000_000;
+const PROMISE_SCHEDULING_GAS: Gas = 25_000_000_000_000;
+const MIN_EXECUTION_GAS: Gas = 20_000_000_000_000;
+const REFUND_GAS: Gas = 10_000_000_000_000;
 
 mod account_deposit;
 mod action;
@@ -208,34 +211,26 @@ impl Contract {
         self.accepted_risk_score = accepted_risk_score;
     }
 
-    #[private]
-    #[payable]
-    pub fn callback_aml_operation(&mut self, operation: AmlOperation, sender_id: AccountId) {
-        match env::promise_result(0) {
-            PromiseResult::NotReady => unreachable!(),
-            PromiseResult::Failed => env::panic(b"ERR_AML_CALL_FAILED"),
-            PromiseResult::Successful(result) => {
-                let (category, risk) =
-                    near_sdk::serde_json::from_slice::<(String, u8)>(&result).unwrap();
-                let is_aml_allowed = if category == "None".to_string() {
-                    true
-                } else {
-                    risk <= self.accepted_risk_score
-                };
-
-                self.aml_operation(operation, sender_id, is_aml_allowed);
-            }
-        }
+    fn assert_risk(&self, category_risk: CategoryRisk) {
+        let (category, risk) = category_risk;
+        if category != "None" {
+            assert!(risk <= self.accepted_risk_score, "ERR_AML_NOT_ALLOWED");
+        };
     }
 
+    #[private]
     #[payable]
-    fn aml_operation(
+    pub fn callback_aml_operation(
         &mut self,
+        #[callback] category_risk: CategoryRisk,
         operation: AmlOperation,
         sender_id: AccountId,
-        is_aml_allowed: bool,
     ) {
-        assert!(is_aml_allowed, "ERR_AML_NOT_ALLOWED");
+        self.assert_risk(category_risk);
+        self.aml_operation(operation, sender_id)
+    }
+
+    fn aml_operation(&mut self, operation: AmlOperation, sender_id: AccountId) {
         match operation {
             AmlOperation::Swap {
                 actions,
@@ -262,6 +257,35 @@ impl Contract {
         }
     }
 
+    fn checked_aml_operation(&mut self, operation: AmlOperation) -> Promise {
+        let prepaid_gas = env::prepaid_gas();
+        let required_gas = env::used_gas() + AML_CHECK_GAS + PROMISE_SCHEDULING_GAS + REFUND_GAS;
+        assert!(
+            prepaid_gas >= required_gas + MIN_EXECUTION_GAS,
+            "ERR_NOT_ENOUGH_GAS"
+        );
+        ext_aml::get_address(
+            env::predecessor_account_id(),
+            &self.aml_account_id,
+            0,
+            AML_CHECK_GAS,
+        )
+        .then(ext_self::callback_aml_operation(
+            operation,
+            env::predecessor_account_id(),
+            &env::current_account_id(),
+            env::attached_deposit(),
+            prepaid_gas - required_gas,
+        ))
+        .then(ext_self::handle_refund(
+            env::predecessor_account_id(),
+            U128(env::attached_deposit()),
+            &env::current_account_id(),
+            0,
+            REFUND_GAS,
+        ))
+    }
+
     /// Execute set of swap actions between pools.
     /// If referrer provided, pays referral_fee to it.
     /// If no attached deposit, outgoing tokens used in swaps must be whitelisted.
@@ -273,22 +297,10 @@ impl Contract {
     ) -> Promise {
         self.assert_contract_running();
         assert_ne!(actions.len(), 0, "ERR_AT_LEAST_ONE_SWAP");
-        ext_aml::get_address(
-            env::predecessor_account_id(),
-            &self.aml_account_id,
-            0,
-            XCC_GAS,
-        )
-        .then(ext_self::callback_aml_operation(
-            AmlOperation::Swap {
-                actions,
-                referral_id,
-            },
-            env::predecessor_account_id(),
-            &env::current_account_id(),
-            env::attached_deposit(),
-            XCC_GAS,
-        ))
+        self.checked_aml_operation(AmlOperation::Swap {
+            actions,
+            referral_id,
+        })
     }
 
     #[payable]
@@ -297,47 +309,28 @@ impl Contract {
         pool_id: u64,
         amounts: Vec<U128>,
         min_amounts: Option<Vec<U128>>,
-    ) {
+    ) -> Promise {
         self.assert_contract_running();
-        ext_aml::get_address(
-            env::predecessor_account_id(),
-            &self.aml_account_id,
-            0,
-            XCC_GAS,
-        )
-        .then(ext_self::callback_aml_operation(
-            AmlOperation::AddLiquidity {
-                pool_id,
-                amounts,
-                min_amounts,
-            },
-            env::predecessor_account_id(),
-            &env::current_account_id(),
-            env::attached_deposit(),
-            XCC_GAS,
-        ));
+        self.checked_aml_operation(AmlOperation::AddLiquidity {
+            pool_id,
+            amounts,
+            min_amounts,
+        })
     }
 
     #[payable]
-    pub fn add_stable_liquidity(&mut self, pool_id: u64, amounts: Vec<U128>, min_shares: U128) {
+    pub fn add_stable_liquidity(
+        &mut self,
+        pool_id: u64,
+        amounts: Vec<U128>,
+        min_shares: U128,
+    ) -> Promise {
         self.assert_contract_running();
-        ext_aml::get_address(
-            env::predecessor_account_id(),
-            &self.aml_account_id,
-            0,
-            XCC_GAS,
-        )
-        .then(ext_self::callback_aml_operation(
-            AmlOperation::AddStableLiquidity {
-                pool_id,
-                amounts,
-                min_shares,
-            },
-            env::predecessor_account_id(),
-            &env::current_account_id(),
-            env::attached_deposit(),
-            XCC_GAS,
-        ));
+        self.checked_aml_operation(AmlOperation::AddStableLiquidity {
+            pool_id,
+            amounts,
+            min_shares,
+        })
     }
 
     /// Remove liquidity from the pool into general pool of liquidity.
@@ -444,7 +437,7 @@ impl Contract {
         }
         self.internal_save_account(&sender_id, deposits);
         self.pools.replace(pool_id, &pool);
-        self.internal_check_storage(prev_storage);
+        self.internal_check_storage(prev_storage, &sender_id);
     }
 
     /// For stable swap pool, user can add liquidity with token's combination as his will.
@@ -482,7 +475,7 @@ impl Contract {
         }
         self.internal_save_account(&sender_id, deposits);
         self.pools.replace(pool_id, &pool);
-        self.internal_check_storage(prev_storage);
+        self.internal_check_storage(prev_storage, &sender_id);
 
         mint_shares.into()
     }
@@ -498,7 +491,7 @@ impl Contract {
     }
 
     /// Check how much storage taken costs and refund the left over back.
-    fn internal_check_storage(&self, prev_storage: StorageUsage) {
+    fn internal_check_storage(&self, prev_storage: StorageUsage, sender_id: &AccountId) {
         let storage_cost = env::storage_usage()
             .checked_sub(prev_storage)
             .unwrap_or_default() as Balance
@@ -513,7 +506,7 @@ impl Contract {
             .as_str(),
         );
         if refund > 0 {
-            Promise::new(env::predecessor_account_id()).transfer(refund);
+            Promise::new(sender_id.clone()).transfer(refund);
         }
     }
 
@@ -526,7 +519,7 @@ impl Contract {
         // exchange share was registered at creation time
         pool.share_register(&env::current_account_id());
         self.pools.push(&pool);
-        self.internal_check_storage(prev_storage);
+        self.internal_check_storage(prev_storage, &env::predecessor_account_id());
         id
     }
 
