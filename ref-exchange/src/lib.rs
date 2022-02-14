@@ -93,7 +93,7 @@ pub struct Contract {
     state: RunningState,
     /// Account of an AML contract
     aml_account_id: AccountId,
-    /// Accepted risk score (account's risk score should be greater or equal to this).
+    /// Accepted risk score (account's risk score should be less or equal to this).
     accepted_risk_score: u8,
 }
 
@@ -220,7 +220,7 @@ impl Contract {
                 let is_aml_allowed = if category == "None".to_string() {
                     true
                 } else {
-                    risk >= self.accepted_risk_score
+                    risk <= self.accepted_risk_score
                 };
 
                 self.aml_operation(operation, sender_id, is_aml_allowed);
