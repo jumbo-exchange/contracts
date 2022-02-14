@@ -16,7 +16,7 @@ use test_token::ContractContract as TestToken;
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
     pub TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
     pub PREV_EXCHANGE_WASM_BYTES => "../res/ref_exchange_131.wasm",
-    pub EXCHANGE_WASM_BYTES => "../res/ref_exchange_release.wasm",
+    pub EXCHANGE_WASM_BYTES => "../res/ref_exchange_local.wasm",
     pub TEST_CONTRACT => "../res/test_contract.wasm"
 }
 
@@ -476,7 +476,7 @@ pub fn setup_exchange(
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), exchange_fee, referral_fee, to_va("".to_string()), 5)
+        init_method: new(to_va("owner".to_string()), exchange_fee, referral_fee, to_va(ext_contract()), 5)
     );
     (owner, pool)
 }

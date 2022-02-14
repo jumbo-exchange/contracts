@@ -3,12 +3,11 @@
 // ERR67 could not be tested with this approach
 // ERR70 could not be tested with this approach
 // ERR81 could not be tested with this approach
-
 use near_sdk::json_types::{U128, U64};
-use near_sdk_sim::{init_simulator, call, view, to_yocto, ExecutionResult, runtime};
+use near_sdk_sim::{call, init_simulator, runtime, to_yocto, view, ExecutionResult};
 
-use ref_exchange::SwapAction;
 use crate::common::utils::*;
+use ref_exchange::SwapAction;
 pub mod common;
 
 const ONE_LPT: u128 = 1000000000000000000;
@@ -17,22 +16,30 @@ const ONE_USDT: u128 = 1000000;
 const ONE_USDC: u128 = 1000000;
 
 fn assert_failure(outcome: ExecutionResult, error_message: &str) {
-    assert!(!outcome.is_ok());
-    let exe_status = format!("{:?}", outcome.promise_errors()[0].as_ref().unwrap().status());
+    assert_eq!(outcome.promise_errors().len(), 1);
+    let exe_status = format!(
+        "{:?}",
+        outcome.promise_errors()[0].as_ref().unwrap().status()
+    );
     println!("{}", exe_status);
     assert!(exe_status.contains(error_message));
 }
 
+fn assert_success(outcome: ExecutionResult) {
+    assert_eq!(outcome.promise_errors().len(), 0);
+}
+
 #[test]
-fn sim_stable_e100 () {
+fn sim_stable_e100() {
     let root = init_simulator(None);
+    let _contract = test_contract(&root, ext_contract());
     let (_, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![swap()]);
     let token2 = test_token(&root, usdt(), vec![swap()]);
     let outcome = call!(
         root,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             1000
@@ -43,23 +50,21 @@ fn sim_stable_e100 () {
 }
 
 #[test]
-fn sim_stable_e61 () {
+fn sim_stable_e61() {
     let root = init_simulator(None);
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![swap()]);
     let token2 = test_token(&root, usdt(), vec![swap()]);
     call!(
         owner,
-        ex.extend_whitelisted_tokens(
-            vec![token1.valid_account_id(), token2.valid_account_id()]
-        )
+        ex.extend_whitelisted_tokens(vec![token1.valid_account_id(), token2.valid_account_id()])
     );
 
     // small amp
     let outcome = call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             0
@@ -72,7 +77,7 @@ fn sim_stable_e61 () {
     let outcome = call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             100_000_000
@@ -83,23 +88,21 @@ fn sim_stable_e61 () {
 }
 
 #[test]
-fn sim_stable_e62 () {
+fn sim_stable_e62() {
     let root = init_simulator(None);
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![swap()]);
     let token2 = test_token(&root, usdt(), vec![swap()]);
     call!(
         owner,
-        ex.extend_whitelisted_tokens(
-            vec![token1.valid_account_id(), token2.valid_account_id()]
-        )
+        ex.extend_whitelisted_tokens(vec![token1.valid_account_id(), token2.valid_account_id()])
     );
 
     // invalid fee
     let outcome = call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             100_000,
             10000
@@ -110,35 +113,46 @@ fn sim_stable_e62 () {
 }
 
 #[test]
-fn sim_stable_e63 () {
+fn sim_stable_e63() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![1*ONE_DAI, 1*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![1 * ONE_DAI, 1 * ONE_USDT],
+    );
 
     call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    )
+    .assert_success();
 
     call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(1*ONE_DAI), U128(1*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(1 * ONE_DAI), U128(1 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
     )
     .assert_success();
 
     let token3 = test_token(&root, usdc(), vec![ex.account_id()]);
     whitelist_token(&owner, &ex, vec![token3.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token3], vec![1*ONE_USDC]);
+    deposit_token(&root, &ex, vec![&token3], vec![1 * ONE_USDC]);
 
     let outcome = call!(
         root,
@@ -158,32 +172,48 @@ fn sim_stable_e63 () {
 }
 
 #[test]
-fn sim_stable_e64 () {
+fn sim_stable_e64() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![1*ONE_DAI, 1*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![1 * ONE_DAI, 1 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
     // invalid amount list length
     let outcome = call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(1*ONE_DAI), U128(1*ONE_USDT), U128(100000)], U128(1)),
+        ex.add_stable_liquidity(
+            0,
+            vec![U128(1 * ONE_DAI), U128(1 * ONE_USDT), U128(100000)],
+            U128(1)
+        ),
         deposit = to_yocto("0.01")
     );
+
     assert_failure(outcome, "E64: illegal tokens count");
+
     let outcome = call!(
         root,
         ex.add_stable_liquidity(0, vec![U128(1*ONE_DAI)], U128(1)),
@@ -191,12 +221,11 @@ fn sim_stable_e64 () {
     );
     assert_failure(outcome, "E64: illegal tokens count");
 
-    call!(
+    assert_success(call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(1*ONE_DAI), U128(1*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(1 * ONE_DAI), U128(1 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
-    )
-    .assert_success();
+    ));
 
     let outcome = call!(
         root,
@@ -204,6 +233,7 @@ fn sim_stable_e64 () {
         deposit = 1
     );
     assert_failure(outcome, "E64: illegal tokens count");
+
     let outcome = call!(
         root,
         ex.remove_liquidity(0, U128(1), vec![U128(1)]),
@@ -217,6 +247,7 @@ fn sim_stable_e64 () {
         deposit = 1
     );
     assert_failure(outcome, "E64: illegal tokens count");
+
     let outcome = call!(
         root,
         ex.remove_liquidity_by_tokens(0, vec![U128(1)], U128(1)),
@@ -226,61 +257,78 @@ fn sim_stable_e64 () {
 }
 
 #[test]
-fn sim_stable_e65 () {
+fn sim_stable_e65() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![1*ONE_DAI, 1*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![1 * ONE_DAI, 1 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
     // invalid amount list length
     let outcome = call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(1*ONE_DAI), U128(0*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(1 * ONE_DAI), U128(0 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
     );
     assert_failure(outcome, "E65: init token balance should be non-zero");
 
-
-    call!(
+    assert_success(call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(1*ONE_DAI), U128(1*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(1 * ONE_DAI), U128(1 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
-    )
-    .assert_success();
+    ));
 }
 
 #[test]
-fn sim_stable_e13 () {
+fn sim_stable_e13() {
     let root = init_simulator(None);
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![1*ONE_DAI, 1*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![1 * ONE_DAI, 1 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
     let user = root.create_user("user".to_string(), to_yocto("100"));
 
@@ -307,34 +355,47 @@ fn sim_stable_e13 () {
 }
 
 #[test]
-fn sim_stable_e34 () {
+fn sim_stable_e34() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![1000*ONE_DAI, 1000*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![1000 * ONE_DAI, 1000 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
-    call!(
-        root,
-        ex.add_stable_liquidity(0, vec![U128(1000*ONE_DAI), U128(1000*ONE_USDT)], U128(1)),
-        deposit = to_yocto("0.01")
-    )
-    .assert_success();
+    ));
 
-    let lp_shares = view!(
-        ex.mft_balance_of(":0".to_string(), root.valid_account_id())
-    ).unwrap_json::<U128>();
+    assert_success(call!(
+        root,
+        ex.add_stable_liquidity(
+            0,
+            vec![U128(1000 * ONE_DAI), U128(1000 * ONE_USDT)],
+            U128(1)
+        ),
+        deposit = to_yocto("0.01")
+    ));
+
+    let lp_shares =
+        view!(ex.mft_balance_of(":0".to_string(), root.valid_account_id())).unwrap_json::<U128>();
     let lp_shares = lp_shares.0;
 
     let outcome = call!(
@@ -344,72 +405,97 @@ fn sim_stable_e34 () {
     );
     assert_failure(outcome, "E34: insufficient lp shares");
 
-    call!(
+    assert_success(call!(
         owner,
         ex.mft_register(":0".to_string(), owner.valid_account_id()),
         deposit = to_yocto("1")
-    )
-    .assert_success();
+    ));
 
     // transfer all lp token to others
-    call!(
+    assert_success(call!(
         root,
-        ex.mft_transfer(":0".to_string(), owner.valid_account_id(), U128(lp_shares), None),
+        ex.mft_transfer(
+            ":0".to_string(),
+            owner.valid_account_id(),
+            U128(lp_shares),
+            None
+        ),
         deposit = 1
-    )
-    .assert_success();
+    ));
 
     let outcome = call!(
         root,
-        ex.remove_liquidity_by_tokens(0, vec![U128(1*ONE_DAI), U128(1*ONE_USDT)], U128(1)),
+        ex.remove_liquidity_by_tokens(0, vec![U128(1 * ONE_DAI), U128(1 * ONE_USDT)], U128(1)),
         deposit = 1
     );
     assert_failure(outcome, "E34: insufficient lp shares");
 
     let outcome = call!(
         root,
-        ex.mft_transfer(":0".to_string(), owner.valid_account_id(), U128(2*ONE_LPT), None),
+        ex.mft_transfer(
+            ":0".to_string(),
+            owner.valid_account_id(),
+            U128(2 * ONE_LPT),
+            None
+        ),
         deposit = 1
     );
     assert_failure(outcome, "E34: insufficient lp shares");
 }
 
 #[test]
-fn sim_stable_e68 () {
+fn sim_stable_e68() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
-    call!(
+    ));
+    assert_success(call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(100*ONE_DAI), U128(100*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(100 * ONE_DAI), U128(100 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
-    )
-    .assert_success();
+    ));
 
     let outcome = call!(
         root,
-        ex.remove_liquidity(0, U128(100*ONE_LPT), vec![U128(51*ONE_DAI), U128(50*ONE_USDT)]),
+        ex.remove_liquidity(
+            0,
+            U128(100 * ONE_LPT),
+            vec![U128(51 * ONE_DAI), U128(50 * ONE_USDT)]
+        ),
         deposit = 1
     );
     assert_failure(outcome, "E68: slippage error");
 
     let outcome = call!(
         root,
-        ex.remove_liquidity_by_tokens(0, vec![U128(50*ONE_DAI), U128(50*ONE_USDT)], U128(99*ONE_LPT)),
+        ex.remove_liquidity_by_tokens(
+            0,
+            vec![U128(50 * ONE_DAI), U128(50 * ONE_USDT)],
+            U128(99 * ONE_LPT)
+        ),
         deposit = 1
     );
     assert_failure(outcome, "E68: slippage error");
@@ -432,53 +518,75 @@ fn sim_stable_e68 () {
 }
 
 #[test]
-fn sim_stable_e69 () {
+fn sim_stable_e69() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
-    call!(
+    ));
+    assert_success(call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(100*ONE_DAI), U128(100*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(100 * ONE_DAI), U128(100 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
-    )
-    .assert_success();
+    ));
 
     // try to withdraw all from pool
     let outcome = call!(
         root,
-        ex.remove_liquidity(0, U128(200*ONE_LPT), vec![U128(1), U128(1)]),
+        ex.remove_liquidity(0, U128(200 * ONE_LPT), vec![U128(1), U128(1)]),
         deposit = 1
     );
-    assert_failure(outcome, "E69: pool reserved token balance less than MIN_RESERVE");
+    assert_failure(
+        outcome,
+        "E69: pool reserved token balance less than MIN_RESERVE",
+    );
 
     let outcome = call!(
         root,
-        ex.remove_liquidity_by_tokens(0, vec![U128(100*ONE_DAI), U128(100*ONE_USDT)], U128(200*ONE_LPT)),
+        ex.remove_liquidity_by_tokens(
+            0,
+            vec![U128(100 * ONE_DAI), U128(100 * ONE_USDT)],
+            U128(200 * ONE_LPT)
+        ),
         deposit = 1
     );
-    assert_failure(outcome, "E69: pool reserved token balance less than MIN_RESERVE");
+    assert_failure(
+        outcome,
+        "E69: pool reserved token balance less than MIN_RESERVE",
+    );
 
     // remove liquidity so that the pool is small enough
-    call!(
+    assert_success(call!(
         root,
-        ex.remove_liquidity_by_tokens(0, vec![U128(99*ONE_DAI), U128(99*ONE_USDT)], U128(200*ONE_LPT)),
+        ex.remove_liquidity_by_tokens(
+            0,
+            vec![U128(99 * ONE_DAI), U128(99 * ONE_USDT)],
+            U128(200 * ONE_LPT)
+        ),
         deposit = 1
-    )
-    .assert_success();
+    ));
 
     let outcome = call!(
         root,
@@ -486,7 +594,7 @@ fn sim_stable_e69 () {
             vec![SwapAction {
                 pool_id: 0,
                 token_in: dai(),
-                amount_in: Some(U128(99*ONE_DAI)),
+                amount_in: Some(U128(99 * ONE_DAI)),
                 token_out: usdt(),
                 min_amount_out: U128(1)
             }],
@@ -494,34 +602,46 @@ fn sim_stable_e69 () {
         ),
         deposit = 1
     );
-    assert_failure(outcome, "E69: pool reserved token balance less than MIN_RESERVE");
+    assert_failure(
+        outcome,
+        "E69: pool reserved token balance less than MIN_RESERVE",
+    );
 }
 
 #[test]
-fn sim_stable_e71 () {
+fn sim_stable_e71() {
     let root = init_simulator(None);
+    let _ = test_contract(&root, ext_contract());
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
-    call!(
+    ));
+    assert_success(call!(
         root,
-        ex.add_stable_liquidity(0, vec![U128(100*ONE_DAI), U128(100*ONE_USDT)], U128(1)),
+        ex.add_stable_liquidity(0, vec![U128(100 * ONE_DAI), U128(100 * ONE_USDT)], U128(1)),
         deposit = to_yocto("0.01")
-    )
-    .assert_success();
+    ));
 
     let outcome = call!(
         root,
@@ -541,24 +661,33 @@ fn sim_stable_e71 () {
 }
 
 #[test]
-fn sim_stable_e14 () {
+fn sim_stable_e14() {
     let root = init_simulator(None);
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
     let outcome = call!(
         root,
@@ -569,55 +698,70 @@ fn sim_stable_e14 () {
 }
 
 #[test]
-fn sim_stable_e82 () {
+fn sim_stable_e82() {
     let mut gc = runtime::GenesisConfig::default();
     gc.genesis_time = 86400 * 1_000_000_000;
     let root = init_simulator(Some(gc));
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
-    let outcome = call!(
-        owner,
-        ex.stable_swap_ramp_amp(0, 0, U64(0))
-    );
+    let outcome = call!(owner, ex.stable_swap_ramp_amp(0, 0, U64(0)));
     assert_failure(outcome, "E82: insufficient ramp time");
 }
 
 #[test]
-fn sim_stable_e83 () {
+fn sim_stable_e83() {
     let mut gc = runtime::GenesisConfig::default();
     gc.genesis_time = 86400 * 1_000_000_000;
     let root = init_simulator(Some(gc));
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
     let runtime = root.borrow_runtime().current_block().block_timestamp;
     println!("{}", runtime);
@@ -636,26 +780,35 @@ fn sim_stable_e83 () {
 }
 
 #[test]
-fn sim_stable_e84 () {
+fn sim_stable_e84() {
     let mut gc = runtime::GenesisConfig::default();
     gc.genesis_time = 86400 * 1_000_000_000;
     let root = init_simulator(Some(gc));
     let (owner, ex) = setup_exchange(&root, 1600, 400);
     let token1 = test_token(&root, dai(), vec![ex.account_id()]);
     let token2 = test_token(&root, usdt(), vec![ex.account_id()]);
-    whitelist_token(&owner, &ex, vec![token1.valid_account_id(), token2.valid_account_id()]);
-    deposit_token(&root, &ex, vec![&token1, &token2], vec![101*ONE_DAI, 101*ONE_USDT]);
+    whitelist_token(
+        &owner,
+        &ex,
+        vec![token1.valid_account_id(), token2.valid_account_id()],
+    );
+    deposit_token(
+        &root,
+        &ex,
+        vec![&token1, &token2],
+        vec![101 * ONE_DAI, 101 * ONE_USDT],
+    );
 
-    call!(
+    assert_success(call!(
         owner,
         ex.add_stable_swap_pool(
-            vec![token1.valid_account_id(), token2.valid_account_id()], 
+            vec![token1.valid_account_id(), token2.valid_account_id()],
             vec![18, 6],
             25,
             10000
         ),
         deposit = to_yocto("1")
-    ).assert_success();
+    ));
 
     let outcome = call!(
         owner,
