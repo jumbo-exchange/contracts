@@ -117,6 +117,18 @@ impl Contract {
         }
     }
 
+    pub fn update_aml_account_id(&mut self, aml_account_id: ValidAccountId) {
+        self.assert_contract_running();
+        assert!(self.is_owner_or_guardians(), "{}", ERR100_NOT_ALLOWED);
+        self.aml_account_id = aml_account_id.into();
+    }
+
+    pub fn update_accepted_risk_score(&mut self, accepted_risk_score: u8) {
+        self.assert_contract_running();
+        assert!(self.is_owner_or_guardians(), "{}", ERR100_NOT_ALLOWED);
+        self.accepted_risk_score = accepted_risk_score;
+    }
+
     /// Adds new "Simple Pool" with given tokens and given fee.
     /// Attached NEAR should be enough to cover the added storage.
     #[payable]
