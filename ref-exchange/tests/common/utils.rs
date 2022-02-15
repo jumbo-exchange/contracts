@@ -253,7 +253,7 @@ pub fn setup_pool_with_liquidity() -> (
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), 4, 1)
+        init_method: new(to_va("owner".to_string()), 4, 1, to_va("aml".to_string()), 5)
     );
     let token1 = test_token(&root, dai(), vec![swap()]);
     let token2 = test_token(&root, eth(), vec![swap()]);
@@ -353,7 +353,7 @@ pub fn setup_stable_pool_with_liquidity(
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(owner.valid_account_id(), 1600, 400)
+        init_method: new(owner.valid_account_id(), 1600, 400, to_va("aml".to_string()), 5)
     );
 
     let mut token_contracts: Vec<ContractAccount<TestToken>> = vec![];
@@ -456,7 +456,7 @@ pub fn setup_exchange(root: &UserAccount, exchange_fee: u32, referral_fee: u32) 
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), exchange_fee, referral_fee)
+        init_method: new(to_va("owner".to_string()), exchange_fee, referral_fee, to_va("aml".to_string()), 5)
     );
     (owner, pool)
 }

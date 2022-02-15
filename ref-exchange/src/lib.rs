@@ -4,30 +4,30 @@ use std::fmt;
 use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
-use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet, Vector};
 use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
-    assert_one_yocto, env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
-    PromiseResult, StorageUsage, BorshStorageKey
+    assert_one_yocto, env, log, near_bindgen, AccountId, Balance, BorshStorageKey, PanicOnDefault,
+    Promise, PromiseResult, StorageUsage,
 };
 
-use crate::account_deposit::{VAccount, Account};
+use crate::account_deposit::{Account, VAccount};
 pub use crate::action::SwapAction;
 use crate::action::{Action, ActionResult};
-use crate::errors::*;
 use crate::admin_fee::AdminFees;
+use crate::errors::*;
 use crate::pool::Pool;
 use crate::simple_pool::SimplePool;
 use crate::stable_swap::StableSwapPool;
 use crate::utils::check_token_duplicates;
-pub use crate::views::{PoolInfo, ContractMetadata};
+pub use crate::views::{ContractMetadata, PoolInfo};
 
 mod account_deposit;
 mod action;
-mod errors;
 mod admin_fee;
+mod errors;
 mod legacy;
 mod multi_fungible_token;
 mod owner;
@@ -48,14 +48,15 @@ pub(crate) enum StorageKey {
     Shares { pool_id: u32 },
     Whitelist,
     Guardian,
-    AccountTokens {account_id: AccountId},
+    AccountTokens { account_id: AccountId },
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Eq, PartialEq, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub enum RunningState {
-    Running, Paused
+    Running,
+    Paused,
 }
 
 impl fmt::Display for RunningState {
@@ -86,12 +87,22 @@ pub struct Contract {
     guardians: UnorderedSet<AccountId>,
     /// Running state
     state: RunningState,
+    /// Account of an AML contract
+    aml_account_id: AccountId,
+    /// Accepted risk score (account's risk score should be less or equal to this).
+    accepted_risk_score: u8,
 }
 
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(owner_id: ValidAccountId, exchange_fee: u32, referral_fee: u32) -> Self {
+    pub fn new(
+        owner_id: ValidAccountId,
+        exchange_fee: u32,
+        referral_fee: u32,
+        aml_account_id: ValidAccountId,
+        accepted_risk_score: u8,
+    ) -> Self {
         Self {
             owner_id: owner_id.as_ref().clone(),
             exchange_fee,
@@ -101,6 +112,8 @@ impl Contract {
             whitelisted_tokens: UnorderedSet::new(StorageKey::Whitelist),
             guardians: UnorderedSet::new(StorageKey::Guardian),
             state: RunningState::Running,
+            aml_account_id: aml_account_id.into(),
+            accepted_risk_score,
         }
     }
 
@@ -163,7 +176,7 @@ impl Contract {
             for action in &actions {
                 for token in action.tokens() {
                     assert!(
-                        account.get_balance(&token).is_some() 
+                        account.get_balance(&token).is_some()
                             || self.whitelisted_tokens.contains(&token),
                         "{}",
                         // [AUDIT_05]
@@ -216,10 +229,7 @@ impl Contract {
         let mut amounts: Vec<u128> = amounts.into_iter().map(|amount| amount.into()).collect();
         let mut pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
         // Add amounts given to liquidity first. It will return the balanced amounts.
-        pool.add_liquidity(
-            &sender_id,
-            &mut amounts,
-        );
+        pool.add_liquidity(&sender_id, &mut amounts);
         if let Some(min_amounts) = min_amounts {
             // Check that all amounts are above request min amounts in case of front running that changes the exchange rate.
             for (amount, min_amount) in amounts.iter().zip(min_amounts.iter()) {
@@ -314,9 +324,10 @@ impl Contract {
     /// max_burn_shares: This is slippage protection, if user request would burn shares more than it, panic with ERR68_SLIPPAGE
     #[payable]
     pub fn remove_liquidity_by_tokens(
-        &mut self, pool_id: u64, 
-        amounts: Vec<U128>, 
-        max_burn_shares: U128
+        &mut self,
+        pool_id: u64,
+        amounts: Vec<U128>,
+        max_burn_shares: U128,
     ) -> U128 {
         assert_one_yocto();
         self.assert_contract_running();
@@ -352,7 +363,6 @@ impl Contract {
 
 /// Internal methods implementation.
 impl Contract {
-
     fn assert_contract_running(&self) {
         match self.state {
             RunningState::Running => (),
@@ -367,14 +377,14 @@ impl Contract {
             .unwrap_or_default() as Balance
             * env::storage_byte_cost();
 
-        let refund = env::attached_deposit()
-            .checked_sub(storage_cost)
-            .expect(
-                format!(
-                    "ERR_STORAGE_DEPOSIT need {}, attatched {}", 
-                    storage_cost, env::attached_deposit()
-                ).as_str()
-            );
+        let refund = env::attached_deposit().checked_sub(storage_cost).expect(
+            format!(
+                "ERR_STORAGE_DEPOSIT need {}, attatched {}",
+                storage_cost,
+                env::attached_deposit()
+            )
+            .as_str(),
+        );
         if refund > 0 {
             Promise::new(env::predecessor_account_id()).transfer(refund);
         }
@@ -483,7 +493,7 @@ mod tests {
     fn setup_contract() -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.predecessor_account_id(accounts(0)).build());
-        let contract = Contract::new(accounts(0), 1600, 400);
+        let contract = Contract::new(accounts(0), 1600, 400, accounts(5), 5);
         (context, contract)
     }
 

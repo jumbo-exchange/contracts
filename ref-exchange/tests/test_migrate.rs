@@ -22,7 +22,7 @@ fn test_upgrade() {
         contract_id: "swap".to_string(),
         bytes: &PREV_EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(ValidAccountId::try_from(root.account_id.clone()).unwrap(), 4, 1)
+        init_method: new(ValidAccountId::try_from(root.account_id.clone()).unwrap(), 4, 1, to_va("aml".to_string()), 5)
     );
     // Failed upgrade with no permissions.
     let result = test_user
