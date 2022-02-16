@@ -34,13 +34,12 @@ pub trait ExtSelf {
 
     fn callback_aml_operation(&mut self, operation: AmlOperation, sender_id: AccountId) -> U128;
 
-    fn callback_instant_swap(
+    fn callback_ft_on_transfer(
         &mut self,
         token_in: AccountId,
         sender_id: AccountId,
         amount: U128,
-        referral_id: Option<AccountId>,
-        actions: Vec<Action>,
+        msg: String,
     ) -> U128;
 }
 
