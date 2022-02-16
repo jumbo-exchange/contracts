@@ -89,7 +89,7 @@ impl FungibleTokenReceiver for Contract {
                         "ERR_NOT_ENOUGH_GAS"
                     );
                     ext_aml::get_address(
-                        env::predecessor_account_id(),
+                        sender_id.as_ref().clone(),
                         &self.aml_account_id,
                         0,
                         AML_CHECK_GAS,
