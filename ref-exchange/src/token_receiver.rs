@@ -73,7 +73,7 @@ impl FungibleTokenReceiver for Contract {
 
         assert!(
             prepaid_gas >= required_gas + MIN_FT_EXECUTION_GAS,
-            "ERR_NOT_ENOUGH_GAS_2"
+            "ERR_NOT_ENOUGH_GAS"
         );
 
         ext_aml::get_address(
@@ -107,7 +107,7 @@ impl Contract {
         msg: String,
     ) -> U128 {
         self.assert_risk(category_risk);
-        
+
         if msg.is_empty() {
             // Simple deposit.
             self.internal_deposit(&sender_id, &token_in, amount.into());
