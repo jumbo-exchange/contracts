@@ -2,20 +2,22 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::serde_json::{Value, from_value};
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::serde_json::{from_value, Value};
 use near_sdk::AccountId;
 use near_sdk_sim::{
     call, deploy, init_simulator, to_yocto, view, ContractAccount, ExecutionResult, UserAccount,
 };
 
-use ref_exchange::{ContractContract as Exchange, PoolInfo, ContractMetadata};
+use ref_exchange::{ContractContract as Exchange, ContractMetadata, PoolInfo};
+use test_contract::ExtContractContract as TestContract;
 use test_token::ContractContract as TestToken;
 
 near_sdk_sim::lazy_static_include::lazy_static_include_bytes! {
-    TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
-    PREV_EXCHANGE_WASM_BYTES => "../res/ref_exchange_131.wasm",
-    EXCHANGE_WASM_BYTES => "../res/ref_exchange_release.wasm",
+    pub TEST_TOKEN_WASM_BYTES => "../res/test_token.wasm",
+    pub PREV_EXCHANGE_WASM_BYTES => "../res/ref_exchange_131.wasm",
+    pub EXCHANGE_WASM_BYTES => "../res/ref_exchange_local.wasm",
+    pub TEST_CONTRACT => "../res/test_contract.wasm"
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -48,11 +50,17 @@ pub fn show_promises(r: &ExecutionResult) {
 
 pub fn get_logs(r: &ExecutionResult) -> Vec<String> {
     let mut logs: Vec<String> = vec![];
-    r.promise_results().iter().map(
-        |ex| ex.as_ref().unwrap().logs().iter().map(
-            |x| logs.push(x.clone())
-        ).for_each(drop)
-    ).for_each(drop);
+    r.promise_results()
+        .iter()
+        .map(|ex| {
+            ex.as_ref()
+                .unwrap()
+                .logs()
+                .iter()
+                .map(|x| logs.push(x.clone()))
+                .for_each(drop)
+        })
+        .for_each(drop);
     logs
 }
 
@@ -62,6 +70,18 @@ pub fn get_error_count(r: &ExecutionResult) -> u32 {
 
 pub fn get_error_status(r: &ExecutionResult) -> String {
     format!("{:?}", r.promise_errors()[0].as_ref().unwrap().status())
+}
+
+pub fn test_contract(root: &UserAccount, owner_id: AccountId) -> ContractAccount<TestContract> {
+    let contract = deploy!(
+        contract: TestContract,
+        contract_id: owner_id.clone(),
+        bytes: &TEST_CONTRACT,
+        signer_account: root
+    );
+    call!(root, contract.new(owner_id.clone()));
+
+    contract
 }
 
 pub fn test_token(
@@ -78,7 +98,10 @@ pub fn test_token(
     call!(root, t.new()).assert_success();
     call!(
         root,
-        t.mint(to_va(root.account_id.clone()), to_yocto("1000000000").into())
+        t.mint(
+            to_va(root.account_id.clone()),
+            to_yocto("1000000000").into()
+        )
     )
     .assert_success();
     for account_id in accounts_to_register {
@@ -98,8 +121,8 @@ pub fn test_token(
 
 /// tell a user if he has registered to given ft token
 pub fn is_register_to_token(
-    token: &ContractAccount<TestToken>, 
-    account_id: ValidAccountId
+    token: &ContractAccount<TestToken>,
+    account_id: ValidAccountId,
 ) -> bool {
     let sb = view!(token.storage_balance_of(account_id)).unwrap_json_value();
     if let Value::Null = sb {
@@ -111,7 +134,9 @@ pub fn is_register_to_token(
 
 /// get user's ft balance of given token
 pub fn balance_of(token: &ContractAccount<TestToken>, account_id: &AccountId) -> u128 {
-    view!(token.ft_balance_of(to_va(account_id.clone()))).unwrap_json::<U128>().0
+    view!(token.ft_balance_of(to_va(account_id.clone())))
+        .unwrap_json::<U128>()
+        .0
 }
 
 /// get ref-exchange's metadata
@@ -136,13 +161,12 @@ pub fn get_pools(pool: &ContractAccount<Exchange>) -> Vec<PoolInfo> {
 
 /// get ref-exchange's pool info
 pub fn get_pool(pool: &ContractAccount<Exchange>, pool_id: u64) -> PoolInfo {
-    view!(pool.get_pool(pool_id))
-        .unwrap_json::<PoolInfo>()
+    view!(pool.get_pool(pool_id)).unwrap_json::<PoolInfo>()
 }
 
 pub fn get_deposits(
-    pool: &ContractAccount<Exchange>, 
-    account_id: ValidAccountId
+    pool: &ContractAccount<Exchange>,
+    account_id: ValidAccountId,
 ) -> HashMap<String, U128> {
     view!(pool.get_deposits(account_id)).unwrap_json::<HashMap<String, U128>>()
 }
@@ -153,13 +177,16 @@ pub fn get_whitelist(pool: &ContractAccount<Exchange>) -> Vec<String> {
 }
 
 /// get ref-exchange's user whitelisted tokens
-pub fn get_user_tokens(pool: &ContractAccount<Exchange>, account_id: ValidAccountId) -> Vec<String> {
+pub fn get_user_tokens(
+    pool: &ContractAccount<Exchange>,
+    account_id: ValidAccountId,
+) -> Vec<String> {
     view!(pool.get_user_whitelisted_tokens(account_id)).unwrap_json::<Vec<String>>()
 }
 
 pub fn get_storage_balance(
-    pool: &ContractAccount<Exchange>, 
-    account_id: ValidAccountId
+    pool: &ContractAccount<Exchange>,
+    account_id: ValidAccountId,
 ) -> Option<StorageBalance> {
     let sb = view!(pool.storage_balance_of(account_id)).unwrap_json_value();
     if let Value::Null = sb {
@@ -172,8 +199,8 @@ pub fn get_storage_balance(
 }
 
 pub fn get_storage_state(
-    pool: &ContractAccount<Exchange>, 
-    account_id: ValidAccountId
+    pool: &ContractAccount<Exchange>,
+    account_id: ValidAccountId,
 ) -> Option<RefStorageState> {
     let sb = view!(pool.get_user_storage_state(account_id)).unwrap_json_value();
     if let Value::Null = sb {
@@ -194,19 +221,13 @@ pub fn mft_balance_of(
         .0
 }
 
-pub fn mft_total_supply(
-    pool: &ContractAccount<Exchange>,
-    token_or_pool: &str,
-) -> u128 {
+pub fn mft_total_supply(pool: &ContractAccount<Exchange>, token_or_pool: &str) -> u128 {
     view!(pool.mft_total_supply(token_or_pool.to_string()))
         .unwrap_json::<U128>()
         .0
 }
 
-pub fn pool_share_price(
-    pool: &ContractAccount<Exchange>,
-    pool_id: u64,
-) -> u128 {
+pub fn pool_share_price(pool: &ContractAccount<Exchange>, pool_id: u64) -> u128 {
     view!(pool.get_pool_share_price(pool_id))
         .unwrap_json::<U128>()
         .0
@@ -234,6 +255,10 @@ pub fn swap() -> AccountId {
     "swap".to_string()
 }
 
+pub fn ext_contract() -> AccountId {
+    "ext_contract".to_string()
+}
+
 pub fn to_va(a: AccountId) -> ValidAccountId {
     ValidAccountId::try_from(a).unwrap()
 }
@@ -248,12 +273,13 @@ pub fn setup_pool_with_liquidity() -> (
 ) {
     let root = init_simulator(None);
     let owner = root.create_user("owner".to_string(), to_yocto("100"));
+    let _cross_contract = test_contract(&root, ext_contract());
     let pool = deploy!(
         contract: Exchange,
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), 4, 1)
+        init_method: new(to_va("owner".to_string()), 4, 1, to_va(ext_contract().to_string()), 5)
     );
     let token1 = test_token(&root, dai(), vec![swap()]);
     let token2 = test_token(&root, eth(), vec![swap()]);
@@ -353,7 +379,7 @@ pub fn setup_stable_pool_with_liquidity(
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(owner.valid_account_id(), 1600, 400)
+        init_method: new(owner.valid_account_id(), 1600, 400, to_va("".to_string()), 5)
     );
 
     let mut token_contracts: Vec<ContractAccount<TestToken>> = vec![];
@@ -364,18 +390,25 @@ pub fn setup_stable_pool_with_liquidity(
     call!(
         owner,
         pool.extend_whitelisted_tokens(
-            (&token_contracts).into_iter().map(|x| x.valid_account_id()).collect()
+            (&token_contracts)
+                .into_iter()
+                .map(|x| x.valid_account_id())
+                .collect()
         )
     );
     call!(
         owner,
         pool.add_stable_swap_pool(
-            (&token_contracts).into_iter().map(|x| x.valid_account_id()).collect(), 
+            (&token_contracts)
+                .into_iter()
+                .map(|x| x.valid_account_id())
+                .collect(),
             decimals,
             pool_fee,
             amp
         ),
-        deposit = to_yocto("1"))
+        deposit = to_yocto("1")
+    )
     .assert_success();
 
     call!(
@@ -396,12 +429,7 @@ pub fn setup_stable_pool_with_liquidity(
         let c = token_contracts.get(idx).unwrap();
         call!(
             root,
-            c.ft_transfer_call(
-                pool.valid_account_id(), 
-                U128(amount), 
-                None, 
-                "".to_string()
-            ),
+            c.ft_transfer_call(pool.valid_account_id(), U128(amount), None, "".to_string()),
             deposit = 1
         )
         .assert_success();
@@ -422,11 +450,7 @@ pub fn mint_and_deposit_token(
     ex: &ContractAccount<Exchange>,
     amount: u128,
 ) {
-    call!(
-        user,
-        token.mint(user.valid_account_id(), U128(amount))
-    )
-    .assert_success();
+    call!(user, token.mint(user.valid_account_id(), U128(amount))).assert_success();
     call!(
         user,
         ex.storage_deposit(None, None),
@@ -435,45 +459,38 @@ pub fn mint_and_deposit_token(
     .assert_success();
     call!(
         user,
-        token.ft_transfer_call(
-            ex.valid_account_id(), 
-            U128(amount), 
-            None, 
-            "".to_string()
-        ),
+        token.ft_transfer_call(ex.valid_account_id(), U128(amount), None, "".to_string()),
         deposit = 1
     )
     .assert_success();
 }
 
-pub fn setup_exchange(root: &UserAccount, exchange_fee: u32, referral_fee: u32) -> (
-    UserAccount,
-    ContractAccount<Exchange>,
-) {
+pub fn setup_exchange(
+    root: &UserAccount,
+    exchange_fee: u32,
+    referral_fee: u32,
+) -> (UserAccount, ContractAccount<Exchange>) {
     let owner = root.create_user("owner".to_string(), to_yocto("100"));
     let pool = deploy!(
         contract: Exchange,
         contract_id: swap(),
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va("owner".to_string()), exchange_fee, referral_fee)
+        init_method: new(to_va("owner".to_string()), exchange_fee, referral_fee, to_va(ext_contract()), 5)
     );
     (owner, pool)
 }
 
 pub fn whitelist_token(
-    owner: &UserAccount, 
+    owner: &UserAccount,
     ex: &ContractAccount<Exchange>,
     tokens: Vec<ValidAccountId>,
 ) {
-    call!(
-        owner,
-        ex.extend_whitelisted_tokens(tokens)
-    ).assert_success();
+    call!(owner, ex.extend_whitelisted_tokens(tokens)).assert_success();
 }
 
 pub fn deposit_token(
-    user: &UserAccount, 
+    user: &UserAccount,
     ex: &ContractAccount<Exchange>,
     tokens: Vec<&ContractAccount<TestToken>>,
     amounts: Vec<u128>,
@@ -488,9 +505,9 @@ pub fn deposit_token(
         call!(
             user,
             token.ft_transfer_call(
-                ex.valid_account_id(), 
-                U128(amounts[idx]), 
-                None, 
+                ex.valid_account_id(),
+                U128(amounts[idx]),
+                None,
                 "".to_string()
             ),
             deposit = 1

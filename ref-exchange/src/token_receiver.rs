@@ -1,4 +1,3 @@
-
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{serde_json, PromiseOrValue};
@@ -6,6 +5,8 @@ use near_sdk::{serde_json, PromiseOrValue};
 use crate::*;
 
 pub const VIRTUAL_ACC: &str = "@";
+
+pub const MIN_FT_EXECUTION_GAS: Gas = 50_000_000_000_000;
 
 /// Message parameters to receive via token function call.
 #[derive(Serialize, Deserialize)]
@@ -30,7 +31,6 @@ impl Contract {
         referral_id: Option<AccountId>,
         actions: &[Action],
     ) -> Vec<(AccountId, Balance)> {
-
         // let @ be the virtual account
         let mut account: Account = Account::new(&String::from(VIRTUAL_ACC));
 
@@ -52,7 +52,6 @@ impl Contract {
 
         result
     }
-
 }
 
 #[near_bindgen]
@@ -67,11 +66,52 @@ impl FungibleTokenReceiver for Contract {
         msg: String,
     ) -> PromiseOrValue<U128> {
         self.assert_contract_running();
+
         let token_in = env::predecessor_account_id();
+        let prepaid_gas = env::prepaid_gas();
+        let required_gas = env::used_gas() + AML_CHECK_GAS + PROMISE_SCHEDULING_GAS;
+
+        assert!(
+            prepaid_gas >= required_gas + MIN_FT_EXECUTION_GAS,
+            "ERR_NOT_ENOUGH_GAS"
+        );
+
+        ext_aml::get_address(
+            sender_id.as_ref().clone(),
+            &self.aml_account_id,
+            0,
+            AML_CHECK_GAS,
+        )
+        .then(ext_self::callback_ft_on_transfer(
+            token_in,
+            sender_id.into(),
+            amount,
+            msg,
+            &env::current_account_id(),
+            env::attached_deposit(),
+            prepaid_gas - required_gas,
+        ))
+        .into()
+    }
+}
+
+#[near_bindgen]
+impl Contract {
+    #[private]
+    pub fn callback_ft_on_transfer(
+        &mut self,
+        #[callback] category_risk: CategoryRisk,
+        token_in: AccountId,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> U128 {
+        self.assert_risk(category_risk);
+
         if msg.is_empty() {
             // Simple deposit.
-            self.internal_deposit(sender_id.as_ref(), &token_in, amount.into());
-            PromiseOrValue::Value(U128(0))
+            self.internal_deposit(&sender_id, &token_in, amount.into());
+            U128(0)
         } else {
             // instant swap
             let message =
@@ -82,17 +122,14 @@ impl FungibleTokenReceiver for Contract {
                     actions,
                 } => {
                     let referral_id = referral_id.map(|x| x.to_string());
-                    let out_amounts = self.internal_direct_actions(
-                        token_in,
-                        amount.0,
-                        referral_id,
-                        &actions,
-                    );
+
+                    let out_amounts =
+                        self.internal_direct_actions(token_in, amount.0, referral_id, &actions);
                     for (token_out, amount_out) in out_amounts.into_iter() {
-                        self.internal_send_tokens(sender_id.as_ref(), &token_out, amount_out);
+                        self.internal_send_tokens(&sender_id, &token_out, amount_out);
                     }
                     // Even if send tokens fails, we don't return funds back to sender.
-                    PromiseOrValue::Value(U128(0))
+                    U128(0)
                 }
             }
         }

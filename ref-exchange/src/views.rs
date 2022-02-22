@@ -34,6 +34,8 @@ pub struct RefStorageState {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct PoolInfo {
+    /// ID of this pool.
+    pub id: u32,
     /// Pool kind.
     pub pool_kind: String,
     /// List of tokens in the pool.
@@ -52,6 +54,7 @@ impl From<Pool> for PoolInfo {
         let pool_kind = pool.kind();
         match pool {
             Pool::SimplePool(pool) => Self {
+                id: pool.id,
                 pool_kind,
                 amp: 0,
                 token_account_ids: pool.token_account_ids,
@@ -60,6 +63,7 @@ impl From<Pool> for PoolInfo {
                 shares_total_supply: U128(pool.shares_total_supply),
             },
             Pool::StableSwapPool(pool) => Self {
+                id: pool.id,
                 pool_kind,
                 amp: pool.get_amp(),
                 amounts: pool.get_amounts().into_iter().map(|a| U128(a)).collect(),
@@ -75,6 +79,8 @@ impl From<Pool> for PoolInfo {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct StablePoolInfo {
+    /// ID of the pool.
+    pub id: u32,
     /// List of tokens in the pool.
     pub token_account_ids: Vec<AccountId>,
     pub decimals: Vec<u8>,
@@ -94,6 +100,7 @@ impl From<Pool> for StablePoolInfo {
         match pool {
             Pool::SimplePool(_) => unimplemented!(),
             Pool::StableSwapPool(pool) => Self {
+                id: pool.id,
                 amp: pool.get_amp(),
                 amounts: pool.get_amounts().into_iter().map(|a| U128(a)).collect(),
                 decimals: pool.token_decimals,
@@ -108,7 +115,6 @@ impl From<Pool> for StablePoolInfo {
 
 #[near_bindgen]
 impl Contract {
-
     /// Return contract basic info
     pub fn metadata(&self) -> ContractMetadata {
         ContractMetadata {
@@ -126,7 +132,7 @@ impl Contract {
     pub fn get_guardians(&self) -> Vec<AccountId> {
         self.guardians.to_vec()
     }
-    
+
     /// Returns semver of this contract.
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
@@ -165,7 +171,11 @@ impl Contract {
     }
 
     pub fn get_pool_share_price(&self, pool_id: u64) -> U128 {
-        self.pools.get(pool_id).expect("ERR_NO_POOL").get_share_price().into()
+        self.pools
+            .get(pool_id)
+            .expect("ERR_NO_POOL")
+            .get_share_price()
+            .into()
     }
 
     /// Returns number of shares given account has in given pool.
@@ -191,7 +201,8 @@ impl Contract {
     pub fn get_deposits(&self, account_id: ValidAccountId) -> HashMap<AccountId, U128> {
         let wrapped_account = self.internal_get_account(account_id.as_ref());
         if let Some(account) = wrapped_account {
-            account.get_tokens()
+            account
+                .get_tokens()
                 .iter()
                 .map(|token| (token.clone(), U128(account.get_balance(token).unwrap())))
                 .collect()
@@ -215,8 +226,13 @@ impl Contract {
         token_out: ValidAccountId,
     ) -> U128 {
         let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.get_return(token_in.as_ref(), amount_in.into(), token_out.as_ref(), &AdminFees::new(self.exchange_fee))
-            .into()
+        pool.get_return(
+            token_in.as_ref(),
+            amount_in.into(),
+            token_out.as_ref(),
+            &AdminFees::new(self.exchange_fee),
+        )
+        .into()
     }
 
     /// Get contract level whitelisted tokens.
@@ -235,43 +251,38 @@ impl Contract {
     pub fn get_user_storage_state(&self, account_id: ValidAccountId) -> Option<RefStorageState> {
         let acc = self.internal_get_account(account_id.as_ref());
         if let Some(account) = acc {
-            Some(
-                RefStorageState {
-                    deposit: U128(account.near_amount),
-                    usage: U128(account.storage_usage()),
-                }
-            )           
+            Some(RefStorageState {
+                deposit: U128(account.near_amount),
+                usage: U128(account.storage_usage()),
+            })
         } else {
             None
         }
     }
 
-    pub fn predict_add_stable_liquidity(
-        &self,
-        pool_id: u64,
-        amounts: &Vec<U128>,
-    ) -> U128 {
+    pub fn predict_add_stable_liquidity(&self, pool_id: u64, amounts: &Vec<U128>) -> U128 {
         let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.predict_add_stable_liquidity(&amounts.into_iter().map(|x| x.0).collect(), &AdminFees::new(self.exchange_fee))
-            .into()
+        pool.predict_add_stable_liquidity(
+            &amounts.into_iter().map(|x| x.0).collect(),
+            &AdminFees::new(self.exchange_fee),
+        )
+        .into()
     }
 
-    pub fn predict_remove_liquidity(
-        &self,
-        pool_id: u64,
-        shares: U128,
-    ) -> Vec<U128> {
+    pub fn predict_remove_liquidity(&self, pool_id: u64, shares: U128) -> Vec<U128> {
         let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.predict_remove_liquidity(shares.into()).into_iter().map(|x| U128(x)).collect()
+        pool.predict_remove_liquidity(shares.into())
+            .into_iter()
+            .map(|x| U128(x))
+            .collect()
     }
 
-    pub fn predict_remove_liquidity_by_tokens(
-        &self,
-        pool_id: u64,
-        amounts: &Vec<U128>,
-    ) -> U128 {
+    pub fn predict_remove_liquidity_by_tokens(&self, pool_id: u64, amounts: &Vec<U128>) -> U128 {
         let pool = self.pools.get(pool_id).expect("ERR_NO_POOL");
-        pool.predict_remove_liquidity_by_tokens(&amounts.into_iter().map(|x| x.0).collect(), &AdminFees::new(self.exchange_fee))
-            .into()
+        pool.predict_remove_liquidity_by_tokens(
+            &amounts.into_iter().map(|x| x.0).collect(),
+            &AdminFees::new(self.exchange_fee),
+        )
+        .into()
     }
 }

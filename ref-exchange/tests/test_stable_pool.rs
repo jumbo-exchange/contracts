@@ -32,6 +32,7 @@ fn sim_stable_swap() {
     assert_eq!(
         view!(pool.get_pool(0)).unwrap_json::<PoolInfo>(),
         PoolInfo {
+            id: 0,
             pool_kind: "STABLE_SWAP".to_string(),
             amp: 10000,
             token_account_ids: tokens.into_iter().map(|x| x.account_id()).collect(),
@@ -108,6 +109,7 @@ fn sim_stable_swap() {
     assert_eq!(
         view!(pool.get_pool(0)).unwrap_json::<PoolInfo>(),
         PoolInfo {
+            id: 0,
             pool_kind: "STABLE_SWAP".to_string(),
             amp: 10000,
             token_account_ids: tokens.into_iter().map(|x| x.account_id()).collect(),
@@ -182,6 +184,7 @@ fn sim_stable_lp() {
     assert_eq!(
         view!(pool.get_pool(0)).unwrap_json::<PoolInfo>(),
         PoolInfo {
+            id: 0,
             pool_kind: "STABLE_SWAP".to_string(),
             amp: 10000,
             token_account_ids: tokens.into_iter().map(|x| x.account_id()).collect(),
@@ -214,6 +217,7 @@ fn sim_stable_lp() {
     assert_eq!(
         view!(pool.get_pool(0)).unwrap_json::<PoolInfo>(),
         PoolInfo {
+            id: 0,
             pool_kind: "STABLE_SWAP".to_string(),
             amp: 10000,
             token_account_ids: tokens.into_iter().map(|x| x.account_id()).collect(),

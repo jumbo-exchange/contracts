@@ -1,17 +1,12 @@
 use near_sdk::json_types::U128;
 use near_sdk::AccountId;
+use near_sdk_sim::{call, to_yocto, view};
 use std::collections::HashMap;
-use near_sdk_sim::{
-    call, view, to_yocto,
-};
 
 use ref_exchange::{PoolInfo, SwapAction};
 
 use crate::common::utils::*;
 pub mod common;
-
-
-
 
 #[test]
 fn modify_admin_fee() {
@@ -31,6 +26,7 @@ fn modify_admin_fee() {
     assert_eq!(
         view!(pool.get_pool(0)).unwrap_json::<PoolInfo>(),
         PoolInfo {
+            id: 0,
             pool_kind: "SIMPLE_POOL".to_string(),
             amp: 0,
             token_account_ids: vec![dai(), eth()],
@@ -68,10 +64,13 @@ fn modify_admin_fee() {
         deposit = 1
     )
     .assert_success();
-    let balances = view!(pool.get_deposits(root.valid_account_id()))
-        .unwrap_json::<HashMap<AccountId, U128>>();
+    let balances =
+        view!(pool.get_deposits(root.valid_account_id())).unwrap_json::<HashMap<AccountId, U128>>();
     assert_eq!(balances.get(&dai()).unwrap().0, prev_dai - to_yocto("1"));
-    assert_eq!(balances.get(&eth()).unwrap().0, prev_eth + 1814048647419868151852693);
+    assert_eq!(
+        balances.get(&eth()).unwrap().0,
+        prev_eth + 1814048647419868151852693
+    );
     prev_dai -= to_yocto("1");
     prev_eth += 1814048647419868151852693;
     // the exchange got some lp tokens as 4 bps in 25 bps.
@@ -83,12 +82,9 @@ fn modify_admin_fee() {
     );
 
     // here, we modify admin_fee to more reasonable rate, 1600 bps in 25 bps
-    // which is 4 bps (exchange fee) in total, 
+    // which is 4 bps (exchange fee) in total,
     // and 1 bps (referal fee) in total.
-    let out_come = call!(
-        owner,
-        pool.modify_admin_fee(1600, 400)
-    );
+    let out_come = call!(owner, pool.modify_admin_fee(1600, 400));
     out_come.assert_success();
     assert_eq!(get_error_count(&out_come), 0);
 
@@ -115,11 +111,14 @@ fn modify_admin_fee() {
         deposit = 1
     )
     .assert_success();
-    let balances = view!(pool.get_deposits(root.valid_account_id()))
-        .unwrap_json::<HashMap<AccountId, U128>>();
-    
+    let balances =
+        view!(pool.get_deposits(root.valid_account_id())).unwrap_json::<HashMap<AccountId, U128>>();
+
     assert_eq!(balances.get(&usdt()).unwrap().0, prev_usdt - to_yocto("1"));
-    assert_eq!(balances.get(&eth()).unwrap().0, prev_eth + 1814048647419868151852693);
+    assert_eq!(
+        balances.get(&eth()).unwrap().0,
+        prev_eth + 1814048647419868151852693
+    );
     prev_usdt -= to_yocto("1");
     prev_eth += 1814048647419868151852693;
     assert_eq!(
@@ -135,7 +134,7 @@ fn modify_admin_fee() {
     assert_eq!(balances.get(&usdt()).unwrap_or(&U128(0)).0, 0);
     assert_eq!(balances.get(&eth()).unwrap_or(&U128(0)).0, 0);
     assert_eq!(balances.get(&dai()).unwrap_or(&U128(0)).0, 0);
-    
+
     // only owner can call, and withdraw liquidity to owner's inner account
     let out_come = call!(
         owner,
@@ -153,8 +152,14 @@ fn modify_admin_fee() {
     let balances = view!(pool.get_deposits(owner.valid_account_id()))
         .unwrap_json::<HashMap<AccountId, U128>>();
     assert_eq!(balances.get(&usdt()).unwrap_or(&U128(0)).0, 0);
-    assert_eq!(balances.get(&eth()).unwrap_or(&U128(0)).0, 826681087999039131);
-    assert_eq!(balances.get(&dai()).unwrap_or(&U128(0)).0, 500028389589818806);
+    assert_eq!(
+        balances.get(&eth()).unwrap_or(&U128(0)).0,
+        826681087999039131
+    );
+    assert_eq!(
+        balances.get(&dai()).unwrap_or(&U128(0)).0,
+        500028389589818806
+    );
 
     let out_come = call!(
         owner,
@@ -171,9 +176,18 @@ fn modify_admin_fee() {
     );
     let balances = view!(pool.get_deposits(owner.valid_account_id()))
         .unwrap_json::<HashMap<AccountId, U128>>();
-    assert_eq!(balances.get(&usdt()).unwrap_or(&U128(0)).0, 200007728217076967880);
-    assert_eq!(balances.get(&eth()).unwrap_or(&U128(0)).0, 331493118860347246997);
-    assert_eq!(balances.get(&dai()).unwrap_or(&U128(0)).0, 500028389589818806);
+    assert_eq!(
+        balances.get(&usdt()).unwrap_or(&U128(0)).0,
+        200007728217076967880
+    );
+    assert_eq!(
+        balances.get(&eth()).unwrap_or(&U128(0)).0,
+        331493118860347246997
+    );
+    assert_eq!(
+        balances.get(&dai()).unwrap_or(&U128(0)).0,
+        500028389589818806
+    );
 
     assert_eq!(prev_dai, to_yocto("84"));
     assert_eq!(prev_eth, 73628097294839736303705386);
