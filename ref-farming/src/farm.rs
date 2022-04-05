@@ -1,4 +1,4 @@
-//! Wrapper of different types of farms 
+//! Wrapper of different types of farms
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{AccountId, Balance};
@@ -9,7 +9,7 @@ use crate::SeedId;
 pub(crate) type FarmId = String;
 
 /// Generic Farm, providing wrapper around different implementations of farms.
-/// Allows to add new types of farms just by adding extra item in the enum 
+/// Allows to add new types of farms just by adding extra item in the enum
 /// without needing to migrate the storage.
 #[derive(BorshSerialize, BorshDeserialize)]
 pub enum Farm {
@@ -25,7 +25,7 @@ impl Farm {
     }
 
     /// return None if the farm can not accept reward anymore
-    /// else return amount of undistributed reward 
+    /// else return amount of undistributed reward
     pub fn add_reward(&mut self, amount: &Balance) -> Option<Balance> {
         match self {
             Farm::SimpleFarm(farm) => farm.add_reward(amount),
@@ -60,22 +60,25 @@ impl Farm {
         total_seeds: &Balance,
     ) -> Balance {
         match self {
-            Farm::SimpleFarm(farm) 
-                => farm.view_farmer_unclaimed_reward(user_rps, user_seeds, total_seeds),
+            Farm::SimpleFarm(farm) => {
+                farm.view_farmer_unclaimed_reward(user_rps, user_seeds, total_seeds)
+            }
         }
     }
 
-    /// return the new user reward per seed 
-    /// and amount of reward as (user_rps, reward_amount) 
-    pub fn claim_user_reward(&mut self, 
+    /// return the new user reward per seed
+    /// and amount of reward as (user_rps, reward_amount)
+    pub fn claim_user_reward(
+        &mut self,
         user_rps: &RPS,
-        user_seeds: &Balance, 
-        total_seeds: &Balance, 
+        user_seeds: &Balance,
+        total_seeds: &Balance,
         silent: bool,
     ) -> (RPS, Balance) {
         match self {
-            Farm::SimpleFarm(farm) 
-                => farm.claim_user_reward(user_rps, user_seeds, total_seeds, silent),
+            Farm::SimpleFarm(farm) => {
+                farm.claim_user_reward(user_rps, user_seeds, total_seeds, silent)
+            }
         }
     }
 
@@ -91,4 +94,9 @@ impl Farm {
         }
     }
 
+    pub fn can_be_canceled(&self) -> bool {
+        match self {
+            Farm::SimpleFarm(farm) => farm.can_be_cancelled(),
+        }
+    }
 }

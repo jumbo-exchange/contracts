@@ -1,5 +1,5 @@
 
-use super::utils::to_va;
+use super::utils::{to_va, aml_id};
 
 use near_sdk::{AccountId};
 use near_sdk_sim::{call, deploy, to_yocto, ContractAccount, UserAccount};
@@ -34,7 +34,7 @@ pub fn deploy_pool(root: &UserAccount, contract_id: AccountId, owner_id: Account
         contract_id: contract_id,
         bytes: &EXCHANGE_WASM_BYTES,
         signer_account: root,
-        init_method: new(to_va(owner_id), 4, 1, to_va("".to_string()), 5)
+        init_method: new(to_va(owner_id), 4, 1, to_va(aml_id()), 5)
     );
     pool
 }
